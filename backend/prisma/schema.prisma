@@ -1,0 +1,77 @@
+// prisma/schema.prisma - À créer dans le dossier prisma/
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                Int      @id @default(autoincrement())
+  email             String   @unique
+  passwordHash      String   @map("password_hash")
+  plan              Plan     @default(FREE)
+  creditsRemaining  Int      @default(5) @map("credits_remaining")
+  creditsUsedToday  Int      @default(0) @map("credits_used_today")
+  lastReset         DateTime @default(now()) @map("last_reset") @db.Date
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  
+  // Relations
+  jobs              Job[]
+  
+  // Indexes
+  @@index([email])
+  @@index([plan])
+  @@index([createdAt])
+  @@map("users")
+}
+
+model Job {
+  id              Int       @id @default(autoincrement())
+  userId          Int?      @map("user_id")
+  type            JobType
+  status          JobStatus @default(PENDING)
+  inputFile       String    @map("input_file")
+  outputFile      String?   @map("output_file")
+  settings        Json      @default("{}")
+  progress        Int       @default(0)
+  errorMessage    String?   @map("error_message")
+  processingTime  Int?      @map("processing_time") // en secondes
+  createdAt       DateTime  @default(now()) @map("created_at")
+  completedAt     DateTime? @map("completed_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  
+  // Relations
+  user            User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Indexes
+  @@index([userId])
+  @@index([status])
+  @@index([type])
+  @@index([createdAt])
+  @@index([userId, status])
+  @@index([status, createdAt])
+  @@map("jobs")
+}
+
+// Énumérations
+enum Plan {
+  FREE     @map("free")
+  PREMIUM  @map("premium")
+  PRO      @map("pro")
+}
+
+enum JobType {
+  IMAGE @map("image")
+  VIDEO @map("video")
+}
+
+enum JobStatus {
+  PENDING    @map("pending")
+  PROCESSING @map("processing")
+  COMPLETED  @map("completed")
+  FAILED     @map("failed")
+}
