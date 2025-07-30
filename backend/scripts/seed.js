@@ -1,57 +1,81 @@
-// ================================
-// scripts/seed.js - Données de test avec Prisma
+// scripts/seed.js - Données de test avec Prisma (CORRIGÉ)
 const { prisma } = require('../config/prisma');
 const bcrypt = require('bcryptjs');
 
 async function seedDatabase() {
-  console.log('🌱 Ajout de données de test...');
+  console.log('🌱 Initialisation des données de test...');
   
   try {
-    // Créer des utilisateurs de test
+    // 🗑️ Supprimer les anciennes données de test
+    console.log('🧹 Suppression des anciennes données...');
+    
+    // Supprimer les jobs de test en premier (contrainte de clé étrangère)
+    const deletedJobs = await prisma.job.deleteMany({
+      where: {
+        OR: [
+          { inputFile: { contains: 'test-' } },
+          { outputFile: { contains: 'test-' } },
+          { inputFile: { contains: 'corrupted-' } }
+        ]
+      }
+    });
+    console.log(`   - ${deletedJobs.count} jobs de test supprimés`);
+    
+    // Supprimer les utilisateurs de test
+    const deletedUsers = await prisma.user.deleteMany({
+      where: {
+        email: {
+          in: [
+            'test.free@aiupscaler.com',
+            'test.premium@aiupscaler.com', 
+            'test.pro@aiupscaler.com'
+          ]
+        }
+      }
+    });
+    console.log(`   - ${deletedUsers.count} utilisateurs de test supprimés`);
+    
+    // ✨ Créer des utilisateurs de test frais
+    console.log('✨ Création de nouveaux utilisateurs de test...');
     const testPassword = await bcrypt.hash('TestPass123', 12);
     
-    // Utilisateur gratuit
-    const freeUser = await prisma.user.upsert({
-      where: { email: 'test.free@aiupscaler.com' },
-      update: {},
-      create: {
+    // Utilisateur gratuit - CORRIGÉ: utilise passwordHash
+    const freeUser = await prisma.user.create({
+      data: {
         email: 'test.free@aiupscaler.com',
-        passwordHash: testPassword,
+        passwordHash: testPassword, // ✅ CORRIGÉ: passwordHash au lieu de password_hash
         plan: 'FREE',
         creditsRemaining: 5,
       },
     });
     
     // Utilisateur premium
-    const premiumUser = await prisma.user.upsert({
-      where: { email: 'test.premium@aiupscaler.com' },
-      update: {},
-      create: {
+    const premiumUser = await prisma.user.create({
+      data: {
         email: 'test.premium@aiupscaler.com',
-        passwordHash: testPassword,
+        passwordHash: testPassword, // ✅ CORRIGÉ
         plan: 'PREMIUM',
         creditsRemaining: 100,
       },
     });
     
     // Utilisateur pro
-    const proUser = await prisma.user.upsert({
-      where: { email: 'test.pro@aiupscaler.com' },
-      update: {},
-      create: {
+    const proUser = await prisma.user.create({
+      data: {
         email: 'test.pro@aiupscaler.com',
-        passwordHash: testPassword,
+        passwordHash: testPassword, // ✅ CORRIGÉ
         plan: 'PRO',
         creditsRemaining: 500,
       },
     });
     
     console.log('✅ Utilisateurs de test créés :');
-    console.log(`   - Free: ${freeUser.email}`);
-    console.log(`   - Premium: ${premiumUser.email}`);
-    console.log(`   - Pro: ${proUser.email}`);
+    console.log(`   - Free: ${freeUser.email} (ID: ${freeUser.id})`);
+    console.log(`   - Premium: ${premiumUser.email} (ID: ${premiumUser.id})`);
+    console.log(`   - Pro: ${proUser.email} (ID: ${proUser.id})`);
     
-    // Créer des jobs de test
+    // ✨ Créer des jobs de test frais
+    console.log('✨ Création de nouveaux jobs de test...');
     const jobsData = [
       // Jobs pour utilisateur gratuit
       {
@@ -119,27 +143,33 @@ async function seedDatabase() {
     ];
     
     // Insérer les jobs un par un pour avoir les bonnes dates
+    let jobsCreated = 0;
     for (const jobData of jobsData) {
       await prisma.job.create({ data: jobData });
+      jobsCreated++;
     }
     
-    console.log('✅ Jobs de test créés');
+    console.log(`✅ ${jobsCreated} jobs de test créés`);
     
-    // Statistiques finales
+    // 📊 Statistiques finales
     const stats = await prisma.user.count();
     const jobStats = await prisma.job.count();
     
-    console.log(`📊 Données de test ajoutées :`);
-    console.log(`   - Utilisateurs : ${stats}`);
-    console.log(`   - Jobs : ${jobStats}`);
+    console.log(`\n📊 État final de la base de données :`);
+    console.log(`   - Utilisateurs total : ${stats}`);
+    console.log(`   - Jobs total : ${jobStats}`);
     
-    console.log('\n🔑 Identifiants de test :');
-    console.log('Email: test.free@aiupscaler.com | Mot de passe: TestPass123');
-    console.log('Email: test.premium@aiupscaler.com | Mot de passe: TestPass123');
-    console.log('Email: test.pro@aiupscaler.com | Mot de passe: TestPass123');
+    console.log('\n🔑 Identifiants de test créés :');
+    console.log('   Email: test.free@aiupscaler.com | Mot de passe: TestPass123');
+    console.log('   Email: test.premium@aiupscaler.com | Mot de passe: TestPass123');
+    console.log('   Email: test.pro@aiupscaler.com | Mot de passe: TestPass123');
+    
+    console.log('\n✅ Données de test initialisées avec succès !');
     
   } catch (error) {
-    console.error('❌ Erreur seed :', error);
+    console.error('❌ Erreur lors de l\'initialisation des données :', error);
+    console.error('Stack trace:', error.stack);
+    throw error;
   } finally {
     await prisma.$disconnect();
   }

@@ -1,5 +1,4 @@
-// ================================
-// controllers/userController.js - Gestion utilisateurs
+// controllers/userController.js - Gestion utilisateurs (CORRIGÉ)
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { prisma } = require('../config/prisma');
@@ -30,13 +29,13 @@ class UserController {
       const saltRounds = 12;
       const passwordHash = await bcrypt.hash(password, saltRounds);
 
-      // Créer utilisateur
+      // Créer utilisateur - CORRIGÉ: utilise passwordHash
       const user = await prisma.user.create({
         data: {
           email: email,
-          password_hash: passwordHash,
-          plan: 'free',
-          credits_remaining: 5,
+          passwordHash: passwordHash, // ✅ CORRIGÉ: passwordHash au lieu de password_hash
+          plan: 'FREE',
+          creditsRemaining: 5,
         },
       });
 
@@ -53,7 +52,7 @@ class UserController {
           id: user.id,
           email: user.email,
           plan: user.plan,
-          creditsRemaining: user.credits_remaining
+          creditsRemaining: user.creditsRemaining
         },
         token
       });
@@ -72,7 +71,7 @@ class UserController {
         return res.status(400).json({ error: 'Email et mot de passe requis' });
       }
 
-      // Trouver utilisateur
+      // Trouver utilisateur - CORRIGÉ: utilise le bon nom de champ
       const user = await prisma.user.findUnique({
         where: { email: email }
       });
@@ -81,8 +80,8 @@ class UserController {
         return res.status(401).json({ error: 'Identifiants invalides' });
       }
 
-      // Vérifier password
-      const isValidPassword = await bcrypt.compare(password, user.password_hash);
+      // Vérifier password - CORRIGÉ: utilise passwordHash
+      const isValidPassword = await bcrypt.compare(password, user.passwordHash);
       if (!isValidPassword) {
         return res.status(401).json({ error: 'Identifiants invalides' });
       }
@@ -100,8 +99,8 @@ class UserController {
           id: user.id,
           email: user.email,
           plan: user.plan,
-          creditsRemaining: user.credits_remaining,
-          creditsUsedToday: user.credits_used_today
+          creditsRemaining: user.creditsRemaining,
+          creditsUsedToday: user.creditsUsedToday
         },
         token
       });
@@ -127,27 +126,28 @@ class UserController {
       // Statistiques utilisateur
       const stats = await prisma.job.groupBy({
         by: ['type'],
-        where: { user_id: userId },
+        where: { userId: userId },
         _count: {
           _all: true,
-          completed: true,
         },
       });
 
-      const totalJobs = await prisma.job.count({ where: { user_id: userId } });
-      const completedJobs = await prisma.job.count({ where: { user_id: userId, status: 'completed' } });
-      const imagesProcessed = stats.find(s => s.type === 'image')?._count._all || 0;
-      const videosProcessed = stats.find(s => s.type === 'video')?._count._all || 0;
+      const totalJobs = await prisma.job.count({ where: { userId: userId } });
+      const completedJobs = await prisma.job.count({ 
+        where: { userId: userId, status: 'COMPLETED' } 
+      });
+      const imagesProcessed = stats.find(s => s.type === 'IMAGE')?._count._all || 0;
+      const videosProcessed = stats.find(s => s.type === 'VIDEO')?._count._all || 0;
 
       res.json({
         user: {
           id: user.id,
           email: user.email,
           plan: user.plan,
-          creditsRemaining: user.credits_remaining,
-          creditsUsedToday: user.credits_used_today,
-          lastReset: user.last_reset,
-          createdAt: user.created_at
+          creditsRemaining: user.creditsRemaining,
+          creditsUsedToday: user.creditsUsedToday,
+          lastReset: user.lastReset,
+          createdAt: user.createdAt
         },
         stats: {
           totalJobs: parseInt(totalJobs),
@@ -166,22 +166,22 @@ class UserController {
   async upgradeUser(req, res) {
     try {
       const userId = req.user.id;
-      const { plan } = req.body; // 'premium' ou 'pro'
+      const { plan } = req.body; // 'PREMIUM' ou 'PRO'
       
-      const validPlans = ['premium', 'pro'];
+      const validPlans = ['PREMIUM', 'PRO'];
       if (!validPlans.includes(plan)) {
         return res.status(400).json({ error: 'Plan invalide' });
       }
 
       // Définir crédits selon le plan
-      const credits = plan === 'premium' ? 100 : 500;
+      const credits = plan === 'PREMIUM' ? 100 : 500;
       
       await prisma.user.update({
         where: { id: userId },
         data: {
           plan: plan,
-          credits_remaining: credits,
-          updated_at: new Date(),
+          creditsRemaining: credits,
+          updatedAt: new Date(),
         },
       });
 

@@ -1,6 +1,4 @@
-
-// ================================
-// src/components/features/ImageUploader.tsx - Composant upload d'images
+// src/components/features/ImageUploader.tsx - Composant upload d'images (CORRIGÉ)
 'use client';
 
 import React, { useCallback, useState } from 'react';
@@ -30,8 +28,9 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onJobCreated }) => {
 
     // Vérifier les limites utilisateur
     if (!user) {
-      // Utilisateur non connecté - limite par session (à implémenter côté serveur)
-    } else if (user.plan === 'free' && user.creditsUsedToday >= 5) {
+      toast.error('Connexion requise pour traiter des images');
+      return;
+    } else if (user.plan === 'FREE' && user.creditsUsedToday >= 5) {
       toast.error('Limite quotidienne atteinte. Passez au premium pour continuer !');
       return;
     }
@@ -73,17 +72,14 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onJobCreated }) => {
   ];
 
   return (
-    <div className="w-full max-w-2xl mx-auto space-y-6">
+    <div className="w-full space-y-6">
       {/* Zone de Drop */}
       <div
         {...getRootProps()}
         className={`
           relative border-2 border-dashed rounded-xl p-8 text-center cursor-pointer
-          transition-all duration-300 ease-in-out
-          ${isDragActive 
-            ? 'border-blue-500 bg-blue-50 scale-105' 
-            : 'border-gray-300 hover:border-blue-400 hover:bg-gray-50'
-          }
+          transition-all duration-300 ease-in-out upload-zone
+          ${isDragActive ? 'active' : ''}
           ${isUploading ? 'pointer-events-none opacity-50' : ''}
         `}
       >
@@ -95,7 +91,7 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onJobCreated }) => {
               scale: isDragActive ? 1.2 : 1,
               rotate: isDragActive ? 10 : 0 
             }}
-            className="mx-auto w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center"
+            className="mx-auto w-16 h-16 bg-black rounded-full flex items-center justify-center"
           >
             {isUploading ? (
               <motion.div
@@ -109,7 +105,7 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onJobCreated }) => {
           </motion.div>
           
           <div>
-            <h3 className="text-xl font-semibold text-gray-900">
+            <h3 className="text-xl font-semibold text-black">
               {isUploading ? 'Upload en cours...' : 
                isDragActive ? 'Déposez votre image ici' : 
                'Glissez une image ou cliquez'}
@@ -122,9 +118,9 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onJobCreated }) => {
         
         {/* Indicateur de crédits */}
         {user && (
-          <div className="absolute top-4 right-4 bg-white rounded-lg px-3 py-1 shadow-md">
-            <span className="text-sm font-medium text-gray-600">
-              {user.plan === 'free' 
+          <div className="absolute top-4 right-4 bg-white rounded-lg px-3 py-1 shadow-sm border border-gray-200">
+            <span className="text-sm font-medium text-gray-700">
+              {user.plan === 'FREE' 
                 ? `${5 - user.creditsUsedToday}/5 gratuit`
                 : `${user.creditsRemaining} crédits`
               }
@@ -134,15 +130,15 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onJobCreated }) => {
       </div>
 
       {/* Paramètres */}
-      <div className="bg-white rounded-xl border shadow-sm p-6">
+      <div className="card p-6">
         <div className="flex items-center justify-between mb-4">
-          <h4 className="text-lg font-medium text-gray-900 flex items-center gap-2">
+          <h4 className="text-lg font-medium text-black flex items-center gap-2">
             <Settings className="w-5 h-5" />
             Paramètres d'amélioration
           </h4>
           <button
             onClick={() => setShowSettings(!showSettings)}
-            className="text-blue-600 hover:text-blue-700 text-sm font-medium"
+            className="text-gray-600 hover:text-black text-sm font-medium transition-colors"
           >
             {showSettings ? 'Masquer' : 'Afficher'}
           </button>
@@ -164,14 +160,14 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onJobCreated }) => {
                   <button
                     key={scale.value}
                     onClick={() => setSettings(prev => ({ ...prev, scale: scale.value }))}
-                    disabled={scale.value === '8' && user?.plan === 'free'}
+                    disabled={scale.value === '8' && user?.plan === 'FREE'}
                     className={`
                       p-3 rounded-lg border-2 text-center transition-all
                       ${settings.scale === scale.value
-                        ? 'border-blue-500 bg-blue-50 text-blue-700'
+                        ? 'border-black bg-gray-50 text-black'
                         : 'border-gray-200 hover:border-gray-300 text-gray-700'
                       }
-                      ${scale.value === '8' && user?.plan === 'free'
+                      ${scale.value === '8' && user?.plan === 'FREE'
                         ? 'opacity-50 cursor-not-allowed'
                         : 'cursor-pointer'
                       }
@@ -179,7 +175,7 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onJobCreated }) => {
                   >
                     <div className="font-semibold">{scale.label}</div>
                     <div className="text-xs text-gray-500">{scale.description}</div>
-                    {scale.value === '8' && user?.plan === 'free' && (
+                    {scale.value === '8' && user?.plan === 'FREE' && (
                       <div className="text-xs text-orange-600 font-medium mt-1">Premium</div>
                     )}
                   </button>
@@ -200,18 +196,18 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onJobCreated }) => {
                     className={`
                       w-full p-4 rounded-lg border-2 text-left transition-all
                       ${settings.model === model.value
-                        ? 'border-blue-500 bg-blue-50'
+                        ? 'border-black bg-gray-50'
                         : 'border-gray-200 hover:border-gray-300'
                       }
                     `}
                   >
                     <div className="flex items-center justify-between">
                       <div>
-                        <div className="font-medium text-gray-900">{model.label}</div>
+                        <div className="font-medium text-black">{model.label}</div>
                         <div className="text-sm text-gray-500">{model.description}</div>
                       </div>
                       <Sparkles className={`w-5 h-5 ${
-                        settings.model === model.value ? 'text-blue-500' : 'text-gray-400'
+                        settings.model === model.value ? 'text-black' : 'text-gray-400'
                       }`} />
                     </div>
                   </button>

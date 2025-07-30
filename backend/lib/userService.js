@@ -1,4 +1,4 @@
-// lib/userService.js - Service utilisateur avec Prisma
+// lib/userService.js - Service utilisateur avec remboursement (AJOUTS)
 const { prisma } = require('../config/prisma');
 const bcrypt = require('bcryptjs');
 
@@ -20,7 +20,7 @@ class UserService {
     const user = await prisma.user.create({
       data: {
         email,
-        passwordHash,
+        passwordHash, // ✅ Utilise passwordHash (camelCase)
         plan,
         creditsRemaining: creditsMap[plan],
       },
@@ -36,22 +36,21 @@ class UserService {
     return user;
   }
   
-  // Trouver utilisateur par email
-// lib/userService.js - CORRECTION findByEmail
-static async findByEmail(email) {
-  return await prisma.user.findUnique({
-    where: { email },
-    select: {
-      id: true,
-      email: true,
-      passwordHash: true,  // IMPORTANT: vérifiez que c'est bien "passwordHash"
-      plan: true,
-      creditsRemaining: true,
-      creditsUsedToday: true,
-      lastReset: true,
-    },
-  });
-}
+  // Trouver utilisateur par email - CORRIGÉ
+  static async findByEmail(email) {
+    return await prisma.user.findUnique({
+      where: { email },
+      select: {
+        id: true,
+        email: true,
+        passwordHash: true,  // ✅ CORRIGÉ: utilise passwordHash (camelCase)
+        plan: true,
+        creditsRemaining: true,
+        creditsUsedToday: true,
+        lastReset: true,
+      },
+    });
+  }
   
   // Trouver utilisateur par ID
   static async findById(id) {
@@ -111,6 +110,38 @@ static async findByEmail(email) {
     });
     
     return true;
+  }
+
+  // ✅ NOUVEAU: Décrémenter les crédits utilisés aujourd'hui (pour remboursement FREE)
+  static async decrementDailyCredits(userId) {
+    try {
+      await prisma.user.update({
+        where: { id: userId },
+        data: {
+          creditsUsedToday: { decrement: 1 },
+        },
+      });
+      return true;
+    } catch (error) {
+      console.error('Erreur décrement crédits quotidiens:', error);
+      return false;
+    }
+  }
+
+  // ✅ NOUVEAU: Incrémenter les crédits restants (pour remboursement PREMIUM/PRO)
+  static async incrementCredits(userId) {
+    try {
+      await prisma.user.update({
+        where: { id: userId },
+        data: {
+          creditsRemaining: { increment: 1 },
+        },
+      });
+      return true;
+    } catch (error) {
+      console.error('Erreur incrémentation crédits:', error);
+      return false;
+    }
   }
   
   // Upgrader un utilisateur

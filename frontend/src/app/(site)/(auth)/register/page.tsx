@@ -1,6 +1,4 @@
-
-// ================================
-// src/app/register/page.tsx - Page d'inscription
+// src/app/register/page.tsx - Page d'inscription (CORRIGÉ)
 'use client';
 
 import React, { useState } from 'react';

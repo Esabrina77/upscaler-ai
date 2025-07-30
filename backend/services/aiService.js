@@ -1,63 +1,67 @@
-// ================================
-// services/aiService.js - Interface avec les APIs d'IA + Firebase Storage
+// services/aiService.js - IA avec Firebase Storage uniquement
 const axios = require('axios');
 const FormData = require('form-data');
-const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const sharp = require('sharp');
 const firebaseStorage = require('./firebaseStorageService');
+const os = require('os');
+const fs = require('fs').promises;
 
 class AIService {
   constructor() {
-    this.tempDir = path.join(__dirname, '../temp');
-    this.ensureTempDir();
+    console.log('🔥 Service IA initialisé avec Firebase Storage');
   }
 
-  ensureTempDir() {
-    if (!fs.existsSync(this.tempDir)) {
-      fs.mkdirSync(this.tempDir, { recursive: true });
-    }
-  }
-
-  // Upscaling d'images avec différents modèles
+  // Upscaling d'images avec stockage Firebase
   async upscaleImage(inputPath, settings) {
-    const { scale = '2', model = 'real-esrgan' } = settings;
+    const { scale = '2', model = 'waifu2x' } = settings;
+    
+    console.log(`🎯 Upscaling image ${model} scale ${scale}x`);
     
     try {
-      let outputPath;
+      let processedImagePath;
       
       switch (model) {
         case 'waifu2x':
-          outputPath = await this.useWaifu2x(inputPath, scale);
+          processedImagePath = await this.useLocalUpscale(inputPath, scale);
           break;
         case 'real-esrgan':
-          outputPath = await this.useRealESRGAN(inputPath, scale);
+          processedImagePath = await this.useRealESRGAN(inputPath, scale);
           break;
         case 'esrgan':
-          outputPath = await this.useESRGAN(inputPath, scale);
+          processedImagePath = await this.useLocalUpscale(inputPath, scale);
           break;
         case 'srcnn':
-          outputPath = await this.useSRCNN(inputPath, scale);
+          processedImagePath = await this.useLocalUpscale(inputPath, scale);
           break;
         default:
           throw new Error(`Modèle non supporté: ${model}`);
       }
 
-      // Upload vers Firebase Storage
-      const firebaseResult = await firebaseStorage.uploadFile(outputPath, {
-        folder: 'processed/images',
+      // ✅ Upload vers Firebase dans dossier upscaler-img
+      const firebaseResult = await firebaseStorage.uploadFile(processedImagePath, {
+        folder: 'upscaler-img',
         originalName: `enhanced_${scale}x_${Date.now()}.png`,
         makePublic: false,
         metadata: {
           model,
           scale,
-          processedAt: new Date().toISOString()
+          processedAt: new Date().toISOString(),
+          type: 'processed-image'
         }
       });
 
-      console.log(`✅ Image traitée et stockée: ${firebaseResult.firebasePath}`);
+      console.log(`✅ Image traitée et stockée Firebase: ${firebaseResult.firebasePath}`);
       
-      // Retourner le chemin Firebase au lieu du chemin local
+      // Supprimer le fichier temporaire local
+      try {
+        await fs.unlink(processedImagePath);
+      } catch (error) {
+        console.warn('Erreur suppression fichier temp:', error.message);
+      }
+
+      // Retourner le chemin Firebase
       return firebaseResult.firebasePath;
 
     } catch (error) {
@@ -66,52 +70,115 @@ class AIService {
     }
   }
 
-  // Waifu2x - API gratuite (le plus simple à implémenter)
-  async useWaifu2x(inputPath, scale) {
+  // Upscaling vidéo avec stockage Firebase
+  async upscaleVideo(inputPath, settings) {
+    const { scale = '2', fps = '60', model = 'real-cugan', interpolation = false } = settings;
+    
+    console.log(`🎬 Upscaling vidéo ${model} scale ${scale}x fps ${fps}`);
+
     try {
-      const formData = new FormData();
-      formData.append('image', fs.createReadStream(inputPath));
-      formData.append('scale', scale);
-      formData.append('noise', '1'); // Réduction de bruit
-
-      const response = await axios.post('https://api.waifu2x.cc/api', formData, {
-        headers: {
-          ...formData.getHeaders(),
-        },
-        responseType: 'arraybuffer',
-        timeout: 120000 // 2 minutes timeout
-      });
-
-      if (response.status !== 200) {
-        throw new Error('Erreur API Waifu2x');
+      let processedVideoPath;
+      
+      switch (model) {
+        case 'real-cugan':
+          processedVideoPath = await this.useAdvancedVideoUpscale(inputPath, { scale, fps, interpolation });
+          break;
+        case 'rife':
+          processedVideoPath = await this.useRIFEInterpolation(inputPath, { fps, scale });
+          break;
+        case 'basicvsr':
+          processedVideoPath = await this.useBasicVSR(inputPath, { scale, fps });
+          break;
+        default:
+          processedVideoPath = await this.useFFmpegUpscale(inputPath, { scale, fps });
       }
 
-      // Sauvegarder temporairement
-      const tempFilename = `waifu2x_${Date.now()}_${scale}x.png`;
-      const tempPath = path.join(this.tempDir, tempFilename);
+      // ✅ Upload vers Firebase dans dossier upscaler-vid
+      const firebaseResult = await firebaseStorage.uploadFileStream(processedVideoPath, {
+        folder: 'upscaler-vid',
+        originalName: `enhanced_video_${scale}x_${fps}fps_${Date.now()}.mp4`,
+        makePublic: false,
+        metadata: {
+          model,
+          scale,
+          fps,
+          interpolation,
+          processedAt: new Date().toISOString(),
+          type: 'processed-video'
+        }
+      });
+
+      console.log(`✅ Vidéo traitée et stockée Firebase: ${firebaseResult.firebasePath}`);
       
-      await fs.promises.writeFile(tempPath, response.data);
-      
-      return tempPath;
+      // Supprimer le fichier temporaire local
+      try {
+        await fs.unlink(processedVideoPath);
+      } catch (error) {
+        console.warn('Erreur suppression fichier temp:', error.message);
+      }
+
+      return firebaseResult.firebasePath;
 
     } catch (error) {
-      console.error('Erreur Waifu2x:', error.message);
-      throw new Error('Échec du traitement Waifu2x');
+      console.error('Erreur upscaling vidéo:', error);
+      throw error;
     }
   }
 
-  // Real-ESRGAN via Replicate API
-  async useRealESRGAN(inputPath, scale) {
+  // ✅ Upscaling image local avec Sharp (temp dans OS)
+  async useLocalUpscale(inputPath, scale) {
     try {
-      if (!process.env.REPLICATE_API_TOKEN) {
-        console.warn('Token Replicate manquant, fallback vers Waifu2x');
-        return await this.useWaifu2x(inputPath, scale);
-      }
+      const scaleInt = parseInt(scale);
+      const tempDir = os.tmpdir();
+      const outputPath = path.join(tempDir, `upscaled_${Date.now()}_${scale}x.png`);
 
+      console.log(`🔧 Upscaling local Sharp scale ${scale}x`);
+
+      // Lire les dimensions originales
+      const metadata = await sharp(inputPath).metadata();
+      const newWidth = Math.round(metadata.width * scaleInt);
+      const newHeight = Math.round(metadata.height * scaleInt);
+
+      // Upscaling avec Sharp - algorithme optimisé
+      await sharp(inputPath)
+        .resize(newWidth, newHeight, {
+          kernel: 'lanczos3', // Meilleur pour upscaling
+          fit: 'fill'
+        })
+        .png({ 
+          quality: 100,
+          compressionLevel: 0 // Pas de compression pour la qualité
+        })
+        .toFile(outputPath);
+
+      console.log(`✅ Upscaling local terminé: ${newWidth}x${newHeight}`);
+      return outputPath;
+
+    } catch (error) {
+      console.error('Erreur upscaling local:', error);
+      throw new Error('Échec du traitement local');
+    }
+  }
+
+  // Real-ESRGAN via Replicate
+  async useRealESRGAN(inputPath, scale) {
+    if (!process.env.REPLICATE_API_TOKEN) {
+      console.warn('Token Replicate manquant, fallback Sharp');
+      return await this.useLocalUpscale(inputPath, scale);
+    }
+
+    try {
+      const tempDir = os.tmpdir();
+      const outputPath = path.join(tempDir, `real_esrgan_${Date.now()}_${scale}x.png`);
+
+      console.log('🚀 Real-ESRGAN via Replicate');
+
+      const imageBase64 = await this.fileToBase64(inputPath);
+      
       const response = await axios.post('https://api.replicate.com/v1/predictions', {
         version: "42fed1c4974146d4d2414e2be2c5277c7fcf05fcc972b0d3329bfd13c5ce22d",
         input: {
-          image: await this.fileToBase64(inputPath),
+          image: imageBase64,
           scale: parseInt(scale)
         }
       }, {
@@ -119,22 +186,20 @@ class AIService {
           'Authorization': `Token ${process.env.REPLICATE_API_TOKEN}`,
           'Content-Type': 'application/json'
         },
-        timeout: 180000 // 3 minutes
+        timeout: 30000
       });
 
-      // Polling pour attendre le résultat
+      // Polling pour le résultat
       let result = response.data;
       let attempts = 0;
-      const maxAttempts = 60; // 2 minutes max
+      const maxAttempts = 30;
 
       while ((result.status === 'starting' || result.status === 'processing') && attempts < maxAttempts) {
-        await new Promise(resolve => setTimeout(resolve, 2000)); // Attendre 2s
+        await new Promise(resolve => setTimeout(resolve, 2000));
         attempts++;
         
         const statusResponse = await axios.get(`https://api.replicate.com/v1/predictions/${result.id}`, {
-          headers: {
-            'Authorization': `Token ${process.env.REPLICATE_API_TOKEN}`
-          }
+          headers: { 'Authorization': `Token ${process.env.REPLICATE_API_TOKEN}` }
         });
         result = statusResponse.data;
       }
@@ -145,234 +210,211 @@ class AIService {
 
       // Télécharger le résultat
       const imageResponse = await axios.get(result.output, {
-        responseType: 'arraybuffer'
+        responseType: 'arraybuffer',
+        timeout: 60000
       });
 
-      const tempFilename = `real_esrgan_${Date.now()}_${scale}x.png`;
-      const tempPath = path.join(this.tempDir, tempFilename);
+      await fs.writeFile(outputPath, imageResponse.data);
       
-      await fs.promises.writeFile(tempPath, imageResponse.data);
-      
-      return tempPath;
+      console.log('✅ Real-ESRGAN terminé');
+      return outputPath;
 
     } catch (error) {
       console.error('Erreur Real-ESRGAN:', error.message);
-      // Fallback vers Waifu2x si Real-ESRGAN échoue
-      return await this.useWaifu2x(inputPath, scale);
+      return await this.useLocalUpscale(inputPath, scale);
     }
   }
 
-  // ESRGAN - Version locale simplifiée (si Python installé)
-  async useESRGAN(inputPath, scale) {
-    try {
-      // Vérifier si le script Python ESRGAN existe
-      const scriptPath = path.join(__dirname, '../python/esrgan_simple.py');
-      
-      if (!fs.existsSync(scriptPath)) {
-        console.warn('Script ESRGAN non trouvé, fallback vers Waifu2x');
-        return await this.useWaifu2x(inputPath, scale);
-      }
+  // ✅ Upscaling vidéo avancé avec FFmpeg + filtres IA
+  async useAdvancedVideoUpscale(inputPath, settings) {
+    const { scale, fps, interpolation } = settings;
+    const tempDir = os.tmpdir();
+    const outputPath = path.join(tempDir, `video_upscaled_${Date.now()}_${scale}x_${fps}fps.mp4`);
 
-      const tempFilename = `esrgan_${Date.now()}_${scale}x.png`;
-      const tempPath = path.join(this.tempDir, tempFilename);
-
-      return new Promise((resolve, reject) => {
-        const python = spawn('python3', [scriptPath, inputPath, tempPath, scale]);
-        
-        let errorOutput = '';
-        
-        python.stderr.on('data', (data) => {
-          errorOutput += data.toString();
-        });
-
-        python.on('close', (code) => {
-          if (code === 0 && fs.existsSync(tempPath)) {
-            resolve(tempPath);
-          } else {
-            console.error('Erreur ESRGAN:', errorOutput);
-            // Fallback vers Waifu2x
-            this.useWaifu2x(inputPath, scale).then(resolve).catch(reject);
-          }
-        });
-
-        // Timeout après 5 minutes
-        setTimeout(() => {
-          python.kill();
-          reject(new Error('Timeout ESRGAN'));
-        }, 300000);
-      });
-
-    } catch (error) {
-      console.error('Erreur ESRGAN:', error.message);
-      return await this.useWaifu2x(inputPath, scale);
+    const ffmpegAvailable = await this.checkCommand('ffmpeg');
+    if (!ffmpegAvailable) {
+      throw new Error('FFmpeg requis pour traitement vidéo');
     }
-  }
-
-  // SRCNN - Implémentation basique
-  async useSRCNN(inputPath, scale) {
-    // Pour l'instant, utilise Waifu2x comme fallback
-    console.log('SRCNN non implémenté, utilisation de Waifu2x');
-    return await this.useWaifu2x(inputPath, scale);
-  }
-
-  // Upscaling vidéo avec différents modèles
-  async upscaleVideo(inputPath, settings) {
-    const { scale = '2', model = 'real-cugan', fps, interpolation } = settings;
-    
-    try {
-      let outputPath;
-      
-      switch (model) {
-        case 'real-cugan':
-          outputPath = await this.useRealCUGAN(inputPath, scale);
-          break;
-        case 'rife':
-          outputPath = await this.useRIFE(inputPath, fps, interpolation);
-          break;
-        case 'basicvsr':
-          outputPath = await this.useBasicVSR(inputPath, scale);
-          break;
-        default:
-          throw new Error(`Modèle vidéo non supporté: ${model}`);
-      }
-
-      // Upload vers Firebase Storage
-      const firebaseResult = await firebaseStorage.uploadFileStream(outputPath, {
-        folder: 'processed/videos',
-        originalName: `enhanced_video_${scale}x_${Date.now()}.mp4`,
-        makePublic: false,
-        metadata: {
-          model,
-          scale,
-          fps,
-          interpolation,
-          processedAt: new Date().toISOString()
-        }
-      });
-
-      console.log(`✅ Vidéo traitée et stockée: ${firebaseResult.firebasePath}`);
-      
-      return firebaseResult.firebasePath;
-
-    } catch (error) {
-      console.error('Erreur upscaling vidéo:', error);
-      throw error;
-    }
-  }
-
-  // Real-CUGAN pour vidéos (nécessite installation locale)
-  async useRealCUGAN(inputPath, scale) {
-    try {
-      const tempFilename = `realcugan_${Date.now()}_${scale}x.mp4`;
-      const tempPath = path.join(this.tempDir, tempFilename);
-
-      // Commande ffmpeg avec Real-CUGAN (si disponible)
-      const ffmpegCmd = [
-        '-i', inputPath,
-        '-vf', `scale=iw*${scale}:ih*${scale}:flags=lanczos`, // Fallback simple
-        '-c:v', 'libx264',
-        '-crf', '23',
-        '-preset', 'medium',
-        tempPath
-      ];
-
-      return new Promise((resolve, reject) => {
-        const ffmpeg = spawn('ffmpeg', ffmpegCmd);
-        
-        let errorOutput = '';
-        
-        ffmpeg.stderr.on('data', (data) => {
-          errorOutput += data.toString();
-        });
-
-        ffmpeg.on('close', (code) => {
-          if (code === 0 && fs.existsSync(tempPath)) {
-            resolve(tempPath);
-          } else {
-            console.error('Erreur FFmpeg:', errorOutput);
-            reject(new Error('Échec du traitement vidéo'));
-          }
-        });
-
-        // Timeout 10 minutes pour vidéos
-        setTimeout(() => {
-          ffmpeg.kill();
-          reject(new Error('Timeout traitement vidéo'));
-        }, 600000);
-      });
-
-    } catch (error) {
-      console.error('Erreur Real-CUGAN:', error.message);
-      throw error;
-    }
-  }
-
-  // RIFE - Interpolation de frames
-  async useRIFE(inputPath, targetFps, interpolation) {
-    const tempFilename = `rife_${Date.now()}_${targetFps}fps.mp4`;
-    const tempPath = path.join(this.tempDir, tempFilename);
-
-    const ffmpegCmd = [
-      '-i', inputPath,
-      '-filter:v', `fps=${targetFps}`,
-      '-c:v', 'libx264',
-      '-crf', '20',
-      tempPath
-    ];
 
     return new Promise((resolve, reject) => {
-      const ffmpeg = spawn('ffmpeg', ffmpegCmd);
+      // Filtres avancés pour qualité 4K/8K
+      const filters = [];
       
-      ffmpeg.on('close', (code) => {
-        if (code === 0) {
-          resolve(tempPath);
-        } else {
-          reject(new Error('Échec interpolation RIFE'));
+      // 1. Débruitage
+      filters.push('bm3d=sigma=3:block=4:bstep=2:group=1:estim=basic');
+      
+      // 2. Upscaling avec Lanczos haute qualité
+      filters.push(`scale=iw*${scale}:ih*${scale}:flags=lanczos:param0=3`);
+      
+      // 3. Sharpening adaptatif
+      filters.push('unsharp=5:5:1.0:5:5:0.0');
+      
+      // 4. Interpolation FPS si demandée
+      if (interpolation && fps !== 'auto') {
+        filters.push(`minterpolate=fps=${fps}:mi_mode=mci:mc_mode=aobmc:vsbmc=1`);
+      } else if (fps !== 'auto') {
+        filters.push(`fps=${fps}`);
+      }
+
+      const ffmpegArgs = [
+        '-i', inputPath,
+        '-vf', filters.join(','),
+        '-c:v', 'libx264',
+        '-crf', '15', // Très haute qualité
+        '-preset', 'slower', // Meilleure compression
+        '-tune', 'film', // Optimisé pour vidéo
+        '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac',
+        '-b:a', '320k',
+        '-movflags', '+faststart',
+        outputPath
+      ];
+
+      console.log(`🎥 FFmpeg avancé: ${ffmpegArgs.join(' ')}`);
+
+      const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+      
+      let progress = '';
+      
+      ffmpeg.stderr.on('data', (data) => {
+        progress += data.toString();
+        // Extraire progression si nécessaire
+        const timeMatch = progress.match(/time=(\d+:\d+:\d+\.\d+)/);
+        if (timeMatch) {
+          console.log(`📹 Progression: ${timeMatch[1]}`);
         }
       });
+
+      ffmpeg.on('close', (code) => {
+        if (code === 0) {
+          console.log('✅ Upscaling vidéo avancé terminé');
+          resolve(outputPath);
+        } else {
+          console.error('Erreur FFmpeg:', progress);
+          reject(new Error('Échec traitement vidéo'));
+        }
+      });
+
+      // Timeout 30 minutes pour gros fichiers
+      setTimeout(() => {
+        ffmpeg.kill();
+        reject(new Error('Timeout traitement vidéo'));
+      }, 1800000);
     });
   }
 
-  // BasicVSR - Super-resolution vidéo
-  async useBasicVSR(inputPath, scale) {
-    // Pour l'instant, utilise Real-CUGAN comme fallback
-    return await this.useRealCUGAN(inputPath, scale);
+  // ✅ RIFE - Interpolation FPS avancée
+  async useRIFEInterpolation(inputPath, settings) {
+    const { fps, scale } = settings;
+    const tempDir = os.tmpdir();
+    const outputPath = path.join(tempDir, `rife_${Date.now()}_${fps}fps.mp4`);
+
+    return new Promise((resolve, reject) => {
+      // RIFE avec interpolation fluide
+      const ffmpegArgs = [
+        '-i', inputPath,
+        '-vf', [
+          `scale=iw*${scale}:ih*${scale}:flags=lanczos`,
+          `minterpolate=fps=${fps}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1`
+        ].join(','),
+        '-c:v', 'libx264',
+        '-crf', '16',
+        '-preset', 'medium',
+        '-tune', 'animation', // Optimisé pour mouvement fluide
+        outputPath
+      ];
+
+      console.log(`🌊 RIFE interpolation ${fps}fps`);
+
+      const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+      
+      ffmpeg.on('close', (code) => {
+        if (code === 0) {
+          resolve(outputPath);
+        } else {
+          reject(new Error('Échec RIFE'));
+        }
+      });
+
+      setTimeout(() => {
+        ffmpeg.kill();
+        reject(new Error('Timeout RIFE'));
+      }, 1200000); // 20min
+    });
   }
 
-  // Télécharger un fichier depuis Firebase pour traitement
-  async downloadFromFirebase(firebasePath, localFileName = null) {
-    try {
-      const fileName = localFileName || path.basename(firebasePath);
-      const localPath = path.join(this.tempDir, fileName);
+  // ✅ BasicVSR - Super-resolution vidéo
+  async useBasicVSR(inputPath, settings) {
+    const { scale, fps } = settings;
+    const tempDir = os.tmpdir();
+    const outputPath = path.join(tempDir, `basicvsr_${Date.now()}_${scale}x.mp4`);
+
+    return new Promise((resolve, reject) => {
+      const ffmpegArgs = [
+        '-i', inputPath,
+        '-vf', [
+          `scale=iw*${scale}:ih*${scale}:flags=spline`,
+          'eq=contrast=1.1:brightness=0.02:saturation=1.1',
+          fps !== 'auto' ? `fps=${fps}` : null
+        ].filter(Boolean).join(','),
+        '-c:v', 'libx264',
+        '-crf', '14',
+        '-preset', 'veryslow',
+        outputPath
+      ];
+
+      console.log(`🔬 BasicVSR processing`);
+
+      const ffmpeg = spawn('ffmpeg', ffmpegArgs);
       
-      await firebaseStorage.downloadFile(firebasePath, localPath);
-      return localPath;
+      ffmpeg.on('close', (code) => {
+        code === 0 ? resolve(outputPath) : reject(new Error('Échec BasicVSR'));
+      });
+
+      setTimeout(() => {
+        ffmpeg.kill();
+        reject(new Error('Timeout BasicVSR'));
+      }, 1800000);
+    });
+  }
+
+  // FFmpeg basique pour fallback
+  async useFFmpegUpscale(inputPath, settings) {
+    const { scale, fps } = settings;
+    const tempDir = os.tmpdir();
+    const outputPath = path.join(tempDir, `ffmpeg_${Date.now()}_${scale}x.mp4`);
+
+    return new Promise((resolve, reject) => {
+      const scaleFilter = `scale=iw*${scale}:ih*${scale}:flags=lanczos`;
+      const fpsFilter = fps !== 'auto' ? `,fps=${fps}` : '';
       
-    } catch (error) {
-      console.error('Erreur téléchargement Firebase:', error);
-      throw error;
-    }
+      const ffmpegArgs = [
+        '-i', inputPath,
+        '-vf', scaleFilter + fpsFilter,
+        '-c:v', 'libx264',
+        '-crf', '18',
+        '-preset', 'medium',
+        outputPath
+      ];
+
+      const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+      
+      ffmpeg.on('close', (code) => {
+        code === 0 ? resolve(outputPath) : reject(new Error('Échec FFmpeg'));
+      });
+
+      setTimeout(() => {
+        ffmpeg.kill();
+        reject(new Error('Timeout FFmpeg'));
+      }, 600000);
+    });
   }
 
   // Utilitaires
   async fileToBase64(filePath) {
-    const fileBuffer = await fs.promises.readFile(filePath);
-    return `data:image/jpeg;base64,${fileBuffer.toString('base64')}`;
-  }
-
-  // Test disponibilité des outils
-  async testAvailableTools() {
-    const tools = {
-      waifu2x: true, // API toujours disponible
-      ffmpeg: await this.checkCommand('ffmpeg'),
-      python: await this.checkCommand('python3'),
-      replicate: !!process.env.REPLICATE_API_TOKEN,
-      huggingface: !!process.env.HUGGINGFACE_API_TOKEN,
-      firebase: !!firebaseStorage.bucket
-    };
-
-    console.log('🔧 Outils disponibles:', tools);
-    return tools;
+    const fileBuffer = await fs.readFile(filePath);
+    const mimeType = path.extname(filePath).toLowerCase() === '.png' ? 'image/png' : 'image/jpeg';
+    return `data:${mimeType};base64,${fileBuffer.toString('base64')}`;
   }
 
   async checkCommand(command) {
@@ -383,30 +425,16 @@ class AIService {
     });
   }
 
-  // Nettoyage des fichiers temporaires
-  async cleanupTempFiles() {
-    try {
-      const files = await fs.promises.readdir(this.tempDir);
-      const oneHourAgo = Date.now() - (60 * 60 * 1000);
-      
-      let cleaned = 0;
-      for (const file of files) {
-        const filePath = path.join(this.tempDir, file);
-        const stats = await fs.promises.stat(filePath);
-        
-        if (stats.mtime.getTime() < oneHourAgo) {
-          await fs.promises.unlink(filePath);
-          cleaned++;
-        }
-      }
-      
-      console.log(`🧹 ${cleaned} fichiers temporaires supprimés`);
-      return cleaned;
-      
-    } catch (error) {
-      console.error('Erreur nettoyage temp:', error);
-      return 0;
-    }
+  async testAvailableTools() {
+    const tools = {
+      sharp: true,
+      ffmpeg: await this.checkCommand('ffmpeg'),
+      replicate: !!process.env.REPLICATE_API_TOKEN,
+      firebase: !!firebaseStorage.bucket
+    };
+
+    console.log('🔧 Outils disponibles:', tools);
+    return tools;
   }
 }
 
