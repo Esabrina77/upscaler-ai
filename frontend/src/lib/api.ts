@@ -1,11 +1,11 @@
-// src/lib/api.ts - Client API avec support vidéo
+// src/lib/api.ts - Client API corrigé et complet
 import axios from 'axios';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
 
 export const api = axios.create({
   baseURL: API_URL,
-  timeout: 60000, // 60s pour les gros uploads
+  timeout: 120000, // 2 minutes pour les gros uploads
 });
 
 // Interceptor pour ajouter le token automatiquement
@@ -17,7 +17,7 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Types API
+// ✅ Types API corrigés
 export interface User {
   id: number;
   email: string;
@@ -38,11 +38,19 @@ export interface Job {
     model: string;
     fps?: string;
     interpolation?: boolean;
+    originalInfo?: {
+      duration?: number;
+      resolution?: string;
+      fps?: number;
+      codec?: string;
+    };
   };
   processingTime?: number;
   createdAt: string;
   completedAt?: string;
   errorMessage?: string;
+  available?: boolean;
+  expiredMessage?: string;
 }
 
 export interface AuthResponse {
@@ -51,20 +59,49 @@ export interface AuthResponse {
   message: string;
 }
 
-// Helpers pour les comparaisons de status
+export interface VideoUploadResponse {
+  jobId: number;
+  status: string;
+  message: string;
+  estimatedTime?: number;
+  inputSize?: string;
+  videoInfo?: {
+    duration: number;
+    resolution: string;
+    currentFps: number;
+  };
+  queuePosition?: number;
+}
+
+export interface ImageUploadResponse {
+  jobId: number;
+  status: string;
+  downloadUrl?: string;
+  previewUrl?: string;
+  processingTime?: number;
+  inputSize?: string;
+}
+
+// Constants pour comparaisons type-safe
 export const JobStatus = {
   PENDING: 'PENDING' as const,
   PROCESSING: 'PROCESSING' as const,
   COMPLETED: 'COMPLETED' as const,
   FAILED: 'FAILED' as const
-};
+} as const;
 
 export const JobType = {
   IMAGE: 'IMAGE' as const,
   VIDEO: 'VIDEO' as const
-};
+} as const;
 
-// API Functions
+export const UserPlan = {
+  FREE: 'FREE' as const,
+  PREMIUM: 'PREMIUM' as const,
+  PRO: 'PRO' as const
+} as const;
+
+// ✅ API Functions
 export const authAPI = {
   register: (email: string, password: string) =>
     api.post<AuthResponse>('/auth/register', { email, password }),
@@ -73,10 +110,18 @@ export const authAPI = {
     api.post<AuthResponse>('/auth/login', { email, password }),
   
   getProfile: () =>
-    api.get<{ user: User; stats: any }>('/auth/profile'),
+    api.get<{ 
+      user: User; 
+      stats: {
+        totalJobs: number;
+        completedJobs: number;
+        imagesProcessed: number;
+        videosProcessed: number;
+      };
+    }>('/auth/profile'),
   
-  upgrade: (plan: string) =>
-    api.post<{ user: User }>('/auth/upgrade', { plan }),
+  upgrade: (plan: 'PREMIUM' | 'PRO') =>
+    api.post<{ user: User; message: string }>('/auth/upgrade', { plan }),
 };
 
 export const uploadAPI = {
@@ -87,13 +132,7 @@ export const uploadAPI = {
     formData.append('scale', settings.scale);
     formData.append('model', settings.model);
     
-    return api.post<{ 
-      jobId: number; 
-      status: string; 
-      downloadUrl?: string;
-      previewUrl?: string;
-      inputSize?: string;
-    }>('/images/upload', formData, {
+    return api.post<ImageUploadResponse>('/images/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
@@ -114,37 +153,50 @@ export const uploadAPI = {
       formData.append('interpolation', settings.interpolation.toString());
     }
     
-    return api.post<{ 
-      jobId: number; 
-      status: string; 
-      estimatedTime?: number;
-      inputSize?: string;
-    }>('/videos/upload', formData, {
+    return api.post<VideoUploadResponse>('/videos/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: 120000, // 2 minutes pour upload vidéo
+      timeout: 180000, // 3 minutes pour upload vidéo
     });
   },
   
-  // Status des jobs (images et vidéos)
-  getJobStatus: (jobId: number) =>
+  // ✅ Status des jobs
+  getImageJobStatus: (jobId: number) =>
     api.get<Job>(`/images/job/${jobId}/status`),
     
   getVideoJobStatus: (jobId: number) =>
     api.get<Job>(`/videos/job/${jobId}/status`),
   
-  // Téléchargement résultats
-  downloadResult: (jobId: number) =>
+  // ✅ Téléchargements
+  getImageDownloadUrl: (jobId: number) =>
     `${API_URL}/images/download/${jobId}`,
     
-  downloadVideoResult: (jobId: number) =>
+  getVideoDownloadUrl: (jobId: number) =>
     `${API_URL}/videos/download/${jobId}`,
   
-  // ✅ Prévisualisation
+  // ✅ Prévisualisations
   getImagePreview: (jobId: number) =>
-    api.get<{ previewUrl: string; settings: any; processingTime?: number }>(`/images/preview/${jobId}`),
+    api.get<{ 
+      previewUrl: string; 
+      settings: any; 
+      processingTime?: number;
+      fileInfo: {
+        size: string;
+        contentType: string;
+        created: string;
+      };
+    }>(`/images/preview/${jobId}`),
     
   getVideoStream: (jobId: number) =>
-    api.get<{ streamUrl: string; settings: any; processingTime?: number }>(`/videos/stream/${jobId}`),
+    api.get<{ 
+      streamUrl: string; 
+      settings: any; 
+      processingTime?: number;
+      fileInfo: {
+        size: string;
+        contentType: string;
+        duration: string;
+      };
+    }>(`/videos/stream/${jobId}`),
     
   // ✅ Informations détaillées
   getVideoInfo: (jobId: number) =>
@@ -152,17 +204,138 @@ export const uploadAPI = {
       jobId: number; 
       status: string; 
       settings: any; 
+      available: boolean;
       metadata: {
         size: string;
         contentType: string;
         created: string;
         updated: string;
       };
+      comparison?: {
+        original: {
+          resolution: string;
+          fps: number;
+          duration: string;
+        };
+        processed: {
+          resolution: string;
+          fps: string;
+          model: string;
+        };
+      };
       processingTime?: number;
     }>(`/videos/info/${jobId}`),
+
+  // ✅ Analyse fichiers
+  analyzeImage: (file: File) => {
+    const formData = new FormData();
+    formData.append('image', file);
+    
+    return api.post<{
+      analysis: {
+        width: number;
+        height: number;
+        format: string;
+        size: number;
+        hasAlpha: boolean;
+      };
+      recommendations: Array<{
+        type: 'INFO' | 'WARNING';
+        message: string;
+        suggestion: string;
+      }>;
+      supportedScales: number[];
+      estimatedTimes: Record<string, number>;
+    }>('/images/analyze', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+
+  analyzeVideo: (file: File) => {
+    const formData = new FormData();
+    formData.append('video', file);
+    
+    return api.post<{
+      analysis: {
+        duration: number;
+        size: string;
+        bitrate: string;
+        video: {
+          resolution: string;
+          fps: number;
+          codec: string;
+        };
+        audio?: {
+          codec: string;
+          sampleRate: string;
+          channels: number;
+        };
+      };
+      recommendations: Array<{
+        type: 'INFO' | 'WARNING';
+        message: string;
+        suggestion: string;
+      }>;
+      supportedScales: number[];
+      estimatedTimes: Record<string, string>;
+      processingTips: string[];
+    }>('/videos/analyze', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
 };
 
-// ✅ Helpers pour validation
+// ✅ API de test et santé
+export const testAPI = {
+  healthCheck: () =>
+    api.get<{
+      status: string;
+      timestamp: string;
+      tools: any;
+      summary: {
+        realEsrgan: string;
+        rife: string;
+        ffmpeg: string;
+        firebase: string;
+      };
+    }>('/test/health'),
+
+  getModels: () =>
+    api.get<{
+      success: boolean;
+      models: {
+        image: Record<string, any>;
+        video: Record<string, any>;
+      };
+      tools: {
+        realEsrgan: Record<string, any>;
+        supported: {
+          imageFormats: string[];
+          videoFormats: string[];
+          scales: number[];
+          fps: number[];
+        };
+      };
+    }>('/test/models'),
+
+  getStorageStats: () =>
+    api.get<{
+      firebase: {
+        used: string;
+        total: string;
+        percentUsed: number;
+        files: number;
+      };
+      recommendations: Array<{
+        priority: string;
+        action: string;
+        command: string | null;
+      }>;
+      status: 'OK' | 'WARNING' | 'CRITICAL';
+    }>('/images/storage-stats'),
+};
+
+// ✅ Helpers de validation
 export const validateImageFile = (file: File): { isValid: boolean; error?: string } => {
   const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/bmp', 'image/tiff'];
   const maxSize = 50 * 1024 * 1024; // 50MB
@@ -184,9 +357,20 @@ export const validateImageFile = (file: File): { isValid: boolean; error?: strin
   return { isValid: true };
 };
 
-export const validateVideoFile = (file: File): { isValid: boolean; error?: string } => {
+export const validateVideoFile = (file: File, userPlan: 'FREE' | 'PREMIUM' | 'PRO' = 'FREE'): { isValid: boolean; error?: string } => {
   const validTypes = ['video/mp4', 'video/avi', 'video/mov', 'video/wmv', 'video/flv', 'video/webm'];
-  const maxSize = 500 * 1024 * 1024; // 500MB pour premium
+  const maxSizes = {
+    FREE: 0, // Pas de vidéos en FREE
+    PREMIUM: 100 * 1024 * 1024, // 100MB
+    PRO: 500 * 1024 * 1024, // 500MB
+  };
+  
+  if (userPlan === 'FREE') {
+    return {
+      isValid: false,
+      error: 'Compte Premium requis pour l\'upload de vidéos.',
+    };
+  }
   
   if (!validTypes.includes(file.type)) {
     return {
@@ -195,35 +379,42 @@ export const validateVideoFile = (file: File): { isValid: boolean; error?: strin
     };
   }
   
-  if (file.size > maxSize) {
+  if (file.size > maxSizes[userPlan]) {
+    const maxMB = maxSizes[userPlan] / (1024 * 1024);
     return {
       isValid: false,
-      error: 'Vidéo trop volumineuse (max 500MB).',
+      error: `Vidéo trop volumineuse (max ${maxMB}MB pour ${userPlan}).`,
     };
   }
   
   return { isValid: true };
 };
 
-// ✅ Helpers pour estimation temps
+// ✅ Helpers pour estimation et formatage
 export const estimateProcessingTime = (
   fileSize: number, 
   scale: string, 
-  type: 'image' | 'video' = 'image'
+  type: 'image' | 'video' = 'image',
+  model?: string
 ): number => {
   const sizeMB = fileSize / (1024 * 1024);
   const scaleMultiplier = Math.pow(parseInt(scale), 1.5);
   
   if (type === 'video') {
-    // Vidéo: beaucoup plus long
-    return Math.min(sizeMB * scaleMultiplier * 30, 3600); // Max 1h
+    const modelFactors = {
+      'rife': 12,
+      'basicvsr': 15,
+      'real-cugan': 8,
+      'ffmpeg': 5
+    };
+    const factor = modelFactors[model as keyof typeof modelFactors] || 8;
+    return Math.min(sizeMB * scaleMultiplier * factor, 3600); // Max 1h
   } else {
-    // Image: rapide
-    return Math.min(sizeMB * scaleMultiplier * 5, 300); // Max 5min
+    const factor = model === 'real-esrgan' ? 10 : 5;
+    return Math.min(sizeMB * scaleMultiplier * factor, 300); // Max 5min
   }
 };
 
-// ✅ Helpers pour formats
 export const formatFileSize = (bytes: number): string => {
   if (bytes === 0) return '0 B';
   
@@ -243,4 +434,12 @@ export const formatDuration = (seconds: number): string => {
   const secs = seconds % 60;
   
   return `${hours}h ${minutes}m ${secs}s`;
+};
+
+// ✅ Types pour les hooks
+export type UploadSettings = {
+  scale: string;
+  model: string;
+  fps?: string;
+  interpolation?: boolean;
 };

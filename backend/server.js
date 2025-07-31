@@ -10,6 +10,7 @@ const compression = require('compression');
 const imageRoutes = require('./routes/images');
 const videoRoutes = require('./routes/videos');
 const authRoutes = require('./routes/auth');
+const testRoutes = require('./routes/test')
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -39,6 +40,10 @@ app.get('/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/images', imageRoutes);
 app.use('/api/videos', videoRoutes);
+
+
+//test
+app.use('/api/test', testRoutes)
 
 // 404 handler
 app.use('*', (req, res) => {
