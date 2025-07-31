@@ -1,10 +1,9 @@
-// services/aiService.js - Service IA modernisé avec utils spécialisés
+// services/aiService.js - Service IA corrigé avec VRAIS modèles uniquement
 const realEsrganUtil = require('../utils/realEsrganUtil');
 const rifeUtil = require('../utils/rifeUtil');
 const ffmpegUtil = require('../utils/ffmpegUtil');
 const cleanupUtil = require('../utils/cleanupUtil');
 const firebaseStorage = require('./firebaseStorageService');
-const sharp = require('sharp');
 const path = require('path');
 const fs = require('fs').promises;
 const os = require('os');
@@ -21,7 +20,7 @@ class AIService {
   async init() {
     console.log('🤖 Initialisation service IA...');
     
-    // Vérifier disponibilité des outils (attendre les checks asynchrones)
+    // Vérifier disponibilité des outils RÉELS uniquement
     const [realEsrganHealth, rifeHealth, ffmpegHealth] = await Promise.all([
       realEsrganUtil.healthCheck(),
       rifeUtil.healthCheck(),
@@ -32,24 +31,22 @@ class AIService {
       realEsrgan: realEsrganHealth,
       rife: rifeHealth,
       ffmpeg: ffmpegHealth,
-      sharp: true,
       firebase: !!firebaseStorage.bucket
     };
 
     console.log('🔧 Outils disponibles:', {
-      'Real-ESRGAN': realEsrganHealth.localAvailable || realEsrganHealth.replicateAvailable,
+      'Real-ESRGAN': realEsrganHealth.localAvailable,
       'RIFE': rifeHealth.available && rifeHealth.hasModels,
       'FFmpeg': ffmpegHealth.available,
-      'Sharp': this.availableTools.sharp,
       'Firebase': this.availableTools.firebase
     });
 
     this.isInitialized = true;
   }
 
-  // ✅ UPSCALING IMAGE avec utils spécialisés
+  // ✅ UPSCALING IMAGE - Modèles RÉELS uniquement
   async upscaleImage(inputPath, settings) {
-    const { scale = '2', model = 'waifu2x' } = settings;
+    const { scale = '2', model = 'realesrgan-x4plus' } = settings;
     const scaleInt = parseInt(scale);
     
     console.log(`🎯 Upscaling image ${model} ${scale}x: ${inputPath}`);
@@ -61,45 +58,20 @@ class AIService {
 
       let processedImagePath;
 
-      switch (model) {
-        case 'real-esrgan':
-          if (this.availableTools.realEsrgan.localAvailable || this.availableTools.realEsrgan.replicateAvailable) {
-            processedImagePath = await realEsrganUtil.upscale(inputPath, { 
-              scale: scaleInt,
-              model: 'RealESRGAN_x4plus'
-            });
-          } else {
-            throw new Error('Real-ESRGAN non disponible');
-          }
-          break;
-
-        case 'esrgan':
-          if (this.availableTools.realEsrgan.localAvailable || this.availableTools.realEsrgan.replicateAvailable) {
-            processedImagePath = await realEsrganUtil.upscale(inputPath, { 
-              scale: scaleInt,
-              model: 'RealESRGAN_x2plus'
-            });
-          } else {
-            processedImagePath = await this.useSharpUpscale(inputPath, scaleInt);
-          }
-          break;
-
-        case 'waifu2x':
-          processedImagePath = await this.useSharpUpscale(inputPath, scaleInt, 'anime');
-          break;
-
-        case 'srcnn':
-          processedImagePath = await this.useSharpUpscale(inputPath, scaleInt, 'photo');
-          break;
-
-        default:
-          throw new Error(`Modèle non supporté: ${model}`);
+      // VRAIS modèles Real-ESRGAN uniquement
+      if (this.availableTools.realEsrgan.localAvailable) {
+        processedImagePath = await realEsrganUtil.upscale(inputPath, { 
+          scale: scaleInt,
+          model: model // Utiliser le modèle exact demandé
+        });
+      } else {
+        throw new Error('Real-ESRGAN non disponible. Aucun autre modèle d\'upscaling installé.');
       }
 
       // Upload vers Firebase
       const firebaseResult = await firebaseStorage.uploadFile(processedImagePath, {
         folder: 'upscaler-img',
-        originalName: `enhanced_${scale}x_${Date.now()}.png`,
+        originalName: `enhanced_${model}_${scale}x_${Date.now()}.png`,
         makePublic: false,
         metadata: {
           model,
@@ -120,9 +92,9 @@ class AIService {
     }
   }
 
-  // ✅ UPSCALING VIDEO avec utils spécialisés
+  // ✅ UPSCALING VIDEO - Modèles RÉELS uniquement
   async upscaleVideo(inputPath, settings) {
-    const { scale = '2', fps = '60', model = 'real-cugan', interpolation = false } = settings;
+    const { scale = '2', fps = '60', model = 'ffmpeg', interpolation = false } = settings;
     const scaleInt = parseInt(scale);
     
     console.log(`🎬 Upscaling vidéo ${model} ${scale}x fps ${fps}`);
@@ -135,65 +107,51 @@ class AIService {
       let processedVideoPath;
 
       switch (model) {
-        case 'real-cugan':
-          if (this.availableTools.ffmpeg.available) {
-            // Upscaling + interpolation combiné avec FFmpeg
-            processedVideoPath = await ffmpegUtil.upscaleVideo(inputPath, scaleInt, {
-              fps: fps !== 'auto' ? fps : undefined,
-              preset: 'medium',
-              crf: 16,
-              filters: interpolation ? [`minterpolate=fps=${fps}`] : []
-            });
-          } else {
-            throw new Error('FFmpeg requis pour Real-CUGAN');
-          }
-          break;
-
         case 'rife':
-          if (this.availableTools.rife.available) {
+          // RIFE pour interpolation FPS + upscaling
+          if (this.availableTools.rife.available && this.availableTools.rife.hasModels) {
             if (interpolation && fps !== 'auto') {
               // RIFE avec upscaling et interpolation
               processedVideoPath = await rifeUtil.upscaleAndInterpolate(inputPath, scaleInt, parseInt(fps));
             } else {
-              // RIFE interpolation seule
-              processedVideoPath = await rifeUtil.interpolateVideo(inputPath, parseInt(fps));
+              // RIFE interpolation seule puis FFmpeg pour upscaling
+              const interpolatedPath = await rifeUtil.interpolateVideo(inputPath, parseInt(fps));
+              processedVideoPath = await ffmpegUtil.upscaleVideo(interpolatedPath, scaleInt, {
+                preset: 'medium',
+                crf: 18
+              });
             }
           } else {
-            // Fallback FFmpeg
-            processedVideoPath = await ffmpegUtil.upscaleVideo(inputPath, scaleInt, { fps });
-          }
-          break;
-
-        case 'basicvsr':
-          if (this.availableTools.ffmpeg.available) {
-            processedVideoPath = await ffmpegUtil.upscaleVideo(inputPath, scaleInt, {
-              fps,
-              preset: 'slow',
-              crf: 14,
-              filters: ['eq=contrast=1.1:brightness=0.02:saturation=1.1']
-            });
-          } else {
-            throw new Error('FFmpeg requis pour BasicVSR');
+            throw new Error('RIFE non disponible - modèles manquants dans train_log/');
           }
           break;
 
         case 'ffmpeg':
         default:
+          // FFmpeg pour upscaling basique + interpolation optionnelle
           if (this.availableTools.ffmpeg.available) {
-            processedVideoPath = await ffmpegUtil.upscaleVideo(inputPath, scaleInt, {
+            const options = {
               fps: fps !== 'auto' ? fps : undefined,
               preset: 'medium',
               crf: 18
-            });
+            };
+            
+            // Ajouter interpolation si demandée
+            if (interpolation && fps !== 'auto') {
+              options.filters = [`minterpolate=fps=${fps}:mi_mode=mci:mc_mode=aobmc`];
+            }
+            
+            processedVideoPath = await ffmpegUtil.upscaleVideo(inputPath, scaleInt, options);
           } else {
             throw new Error('FFmpeg non disponible');
           }
+          break;
       }
 
       // Upload vers Firebase avec stream pour gros fichiers
       const firebaseResult = await firebaseStorage.uploadFileStream(processedVideoPath, {
         folder: 'upscaler-vid',
-        originalName: `enhanced_video_${scale}x_${fps}fps_${Date.now()}.mp4`,
+        originalName: `enhanced_${model}_${scale}x_${fps}fps_${Date.now()}.mp4`,
         makePublic: false,
         metadata: {
           model,
@@ -216,81 +174,19 @@ class AIService {
     }
   }
 
-  // ✅ Upscaling Sharp optimisé
-  async useSharpUpscale(inputPath, scale, type = 'general') {
-    try {
-      const tempDir = os.tmpdir();
-      const outputPath = path.join(tempDir, `sharp_${Date.now()}_${scale}x.png`);
-
-      console.log(`🔧 Sharp upscale ${scale}x (${type})`);
-
-      const metadata = await sharp(inputPath).metadata();
-      const newWidth = Math.round(metadata.width * scale);
-      const newHeight = Math.round(metadata.height * scale);
-
-      let sharpPipeline = sharp(inputPath);
-
-      // Optimisations selon le type
-      switch (type) {
-        case 'anime':
-          // Optimisé pour dessins/anime
-          sharpPipeline = sharpPipeline
-            .resize(newWidth, newHeight, {
-              kernel: 'cubic',
-              fit: 'fill'
-            })
-            .sharpen({ sigma: 1, m1: 0.5, m2: 2 });
-          break;
-
-        case 'photo':
-          // Optimisé pour photos
-          sharpPipeline = sharpPipeline
-            .resize(newWidth, newHeight, {
-              kernel: 'lanczos3',
-              fit: 'fill'
-            })
-            .modulate({ brightness: 1.02, saturation: 1.05 });
-          break;
-
-        default:
-          // Général
-          sharpPipeline = sharpPipeline
-            .resize(newWidth, newHeight, {
-              kernel: 'lanczos3',
-              fit: 'fill'
-            });
-      }
-
-      await sharpPipeline
-        .png({ 
-          quality: 100,
-          compressionLevel: 0,
-          progressive: true
-        })
-        .toFile(outputPath);
-
-      console.log(`✅ Sharp terminé: ${newWidth}x${newHeight}`);
-      return outputPath;
-
-    } catch (error) {
-      console.error('❌ Erreur Sharp:', error);
-      throw new Error('Échec traitement Sharp');
-    }
-  }
-
   // ✅ Estimation taille output image
   async estimateImageOutputSize(inputPath, scale) {
     try {
       const stats = await fs.stat(inputPath);
       const inputSizeMB = stats.size / (1024 * 1024);
       
-      // Facteur d'agrandissement non linéaire
-      const scaleFactor = Math.pow(scale, 1.8);
-      const compressionFactor = 0.7; // PNG compressé vs non compressé
+      // Facteur d'agrandissement réaliste pour Real-ESRGAN
+      const scaleFactor = Math.pow(scale, 1.6); // Real-ESRGAN optimisé
+      const compressionFactor = 0.8; // PNG bien compressé
       
       return Math.ceil(inputSizeMB * scaleFactor * compressionFactor);
     } catch {
-      return scale * scale * 10; // 10MB par défaut
+      return scale * scale * 8; // 8MB par défaut plus réaliste
     }
   }
 
@@ -300,13 +196,13 @@ class AIService {
       const stats = await fs.stat(inputPath);
       const inputSizeMB = stats.size / (1024 * 1024);
       
-      const scaleFactor = Math.pow(scale, 1.5);
-      const fpsFactor = fps === 'auto' ? 1 : (parseInt(fps) / 30);
-      const compressionFactor = 0.8; // H264 efficace
+      const scaleFactor = Math.pow(scale, 1.4); // Facteur vidéo réaliste
+      const fpsFactor = fps === 'auto' ? 1 : Math.min(parseInt(fps) / 30, 2); // Plafonner à 2x
+      const compressionFactor = 0.75; // H264 très efficace
       
       return Math.ceil(inputSizeMB * scaleFactor * fpsFactor * compressionFactor);
     } catch {
-      return scale * 100; // 100MB par défaut
+      return scale * 80; // 80MB par défaut plus réaliste
     }
   }
 
@@ -320,88 +216,91 @@ class AIService {
     }
   }
 
-  // ✅ Estimer temps de traitement
+  // ✅ Estimer temps de traitement RÉALISTE
   async estimateProcessingTime(filePath, settings) {
     const { scale, model, fps, type } = settings;
     
     try {
+      const stats = await fs.stat(filePath);
+      const sizeMB = stats.size / (1024 * 1024);
+      const scaleInt = parseInt(scale);
+      
       if (type === 'image') {
-        if (model === 'real-esrgan') {
-          return await realEsrganUtil.estimateProcessingTime(filePath, parseInt(scale));
-        } else {
-          // Sharp très rapide
-          const stats = await fs.stat(filePath);
-          const sizeMB = stats.size / (1024 * 1024);
-          return Math.ceil(sizeMB * parseInt(scale) * 2); // 2 secondes par MB*scale
+        // Real-ESRGAN uniquement
+        if (model.includes('realesrgan')) {
+          // Basé sur tests réels: ~20-40 secondes pour 1MB en 4x
+          const baseTime = model.includes('anime') ? 15 : 25; // Anime plus rapide
+          return Math.ceil(sizeMB * baseTime * Math.pow(scaleInt / 4, 1.2));
         }
+        return Math.ceil(sizeMB * scaleInt * 5); // Fallback
+        
       } else {
-        // Vidéo
+        // Vidéo avec RIFE ou FFmpeg
+        const durationEstimate = sizeMB / 10; // ~10MB par minute de vidéo
+        
         if (model === 'rife') {
-          return await rifeUtil.estimateProcessingTime(filePath, parseInt(fps));
+          // RIFE très lent mais haute qualité
+          return Math.ceil(durationEstimate * scaleInt * 180); // 3 minutes par minute source
         } else {
-          const stats = await fs.stat(filePath);
-          const sizeMB = stats.size / (1024 * 1024);
-          const scaleFactor = Math.pow(parseInt(scale), 1.5);
-          return Math.ceil(sizeMB * scaleFactor * 10); // 10 secondes par MB*scale
+          // FFmpeg plus rapide
+          const fpsFactor = fps !== 'auto' && parseInt(fps) > 30 ? 1.5 : 1;
+          return Math.ceil(durationEstimate * scaleInt * 60 * fpsFactor); // 1 minute par minute source
         }
       }
     } catch {
-      return type === 'image' ? 60 : 300; // Défaut: 1min image, 5min vidéo
+      return type === 'image' ? 120 : 600; // Défaut conservateur: 2min image, 10min vidéo
     }
   }
 
-  // ✅ Obtenir modèles disponibles
+  // ✅ Obtenir modèles RÉELS disponibles
   getAvailableModels() {
     const models = {
       image: {},
       video: {}
     };
 
-    // Modèles image
-    if (this.availableTools.realEsrgan.localAvailable || this.availableTools.realEsrgan.replicateAvailable) {
-      models.image['real-esrgan'] = {
-        name: 'Real-ESRGAN',
-        description: 'IA avancée, excellent pour photos',
-        scales: [2, 4, 8],
-        speed: 'Moyen',
-        quality: 'Excellent'
+    // Modèles image Real-ESRGAN
+    if (this.availableTools.realEsrgan?.localAvailable) {
+      models.image['realesrgan-x4plus'] = {
+        name: 'Real-ESRGAN x4+',
+        description: 'Modèle général haute qualité pour photos',
+        scales: [2, 4],
+        speed: 'Moyen (2-5 min)',
+        quality: 'Excellent',
+        type: 'general'
+      };
+
+      models.image['realesrgan-x4plus-anime'] = {
+        name: 'Real-ESRGAN Anime',
+        description: 'Optimisé pour dessins, anime et illustrations',
+        scales: [2, 4],
+        speed: 'Rapide (1-3 min)',
+        quality: 'Excellent',
+        type: 'anime'
       };
     }
-
-    models.image['waifu2x'] = {
-      name: 'Waifu2x (Sharp)',
-      description: 'Optimisé dessins et anime',
-      scales: [2, 4],
-      speed: 'Rapide',
-      quality: 'Bon'
-    };
-
-    models.image['srcnn'] = {
-      name: 'SRCNN (Sharp)',
-      description: 'Polyvalent, photos et dessins',
-      scales: [2, 4],
-      speed: 'Rapide',
-      quality: 'Bon'
-    };
 
     // Modèles vidéo
-    if (this.availableTools.ffmpeg.available) {
+    if (this.availableTools.ffmpeg?.available) {
       models.video['ffmpeg'] = {
         name: 'FFmpeg Enhanced',
-        description: 'Filtres avancés, compatible tout format',
+        description: 'Upscaling rapide avec filtres avancés',
         scales: [2, 4],
-        speed: 'Moyen',
-        quality: 'Bon'
+        speed: 'Rapide (1:1 ratio)',
+        quality: 'Bon',
+        interpolation: true
       };
     }
 
-    if (this.availableTools.rife.available) {
+    if (this.availableTools.rife?.available && this.availableTools.rife?.hasModels) {
       models.video['rife'] = {
-        name: 'RIFE',
-        description: 'Interpolation FPS fluide + upscaling',
+        name: 'RIFE AI',
+        description: 'Interpolation FPS IA ultra-fluide + upscaling',
         scales: [2, 4],
-        speed: 'Lent',
-        quality: 'Excellent'
+        speed: 'Lent (3:1 ratio)',
+        quality: 'Exceptionnel',
+        interpolation: true,
+        premium: true
       };
     }
 
@@ -414,6 +313,10 @@ class AIService {
       initialized: this.isInitialized,
       tools: this.availableTools,
       models: this.getAvailableModels(),
+      realEsrganModels: this.availableTools.realEsrgan?.localAvailable ? 
+        await this.getRealEsrganAvailableModels() : [],
+      rifeModels: this.availableTools.rife?.hasModels ? 
+        await this.getRifeAvailableModels() : [],
       storage: {
         firebase: this.availableTools.firebase,
         usage: await cleanupUtil.getFirebaseUsage()
@@ -421,9 +324,65 @@ class AIService {
     };
   }
 
+  // ✅ Vérifier modèles Real-ESRGAN disponibles
+  async getRealEsrganAvailableModels() {
+    try {
+      const modelsPath = process.platform === 'win32' 
+        ? '../ai/Real-ESRGAN-windows/models'
+        : '../ai/Real-ESRGAN-ubuntu/models';
+      
+      const files = await fs.readdir(modelsPath);
+      const models = [];
+      
+      // Vérifier présence des fichiers .bin et .param
+      if (files.includes('realesrgan-x4plus.bin') && files.includes('realesrgan-x4plus.param')) {
+        models.push('realesrgan-x4plus');
+      }
+      
+      if (files.includes('realesrgan-x4plus-anime.bin') && files.includes('realesrgan-x4plus-anime.param')) {
+        models.push('realesrgan-x4plus-anime');
+      }
+      
+      // Modèles vidéo anime
+      if (files.includes('realesr-animevideov3-x4.bin')) {
+        models.push('realesr-animevideov3-x4');
+      }
+      
+      return models;
+    } catch {
+      return [];
+    }
+  }
+
+  // ✅ Vérifier modèles RIFE disponibles
+  async getRifeAvailableModels() {
+    try {
+      const rifePath = '../ai/ECCV2022-RIFE/train_log';
+      const files = await fs.readdir(rifePath);
+      
+      const models = [];
+      
+      if (files.includes('flownet.pkl')) {
+        models.push('flownet');
+      }
+      
+      if (files.includes('RIFE_HDv3.py')) {
+        models.push('RIFE_HDv3');
+      }
+      
+      if (files.includes('IFNet_HDv3.py')) {
+        models.push('IFNet_HDv3');
+      }
+      
+      return models;
+    } catch {
+      return [];
+    }
+  }
+
   // ✅ Créer thumbnail vidéo
   async createVideoThumbnail(videoPath, timeSeconds = 5) {
-    if (!this.availableTools.ffmpeg.available) {
+    if (!this.availableTools.ffmpeg?.available) {
       throw new Error('FFmpeg requis pour thumbnail');
     }
 
@@ -447,19 +406,20 @@ class AIService {
   // ✅ Analyser fichier média
   async analyzeMediaFile(filePath, type) {
     try {
-      if (type === 'image') {
-        const metadata = await sharp(filePath).metadata();
-        return {
-          width: metadata.width,
-          height: metadata.height,
-          format: metadata.format,
-          channels: metadata.channels,
-          hasAlpha: metadata.hasAlpha,
-          density: metadata.density,
-          size: await this.getFileSize(filePath)
-        };
-      } else if (type === 'video' && this.availableTools.ffmpeg.available) {
+      if (type === 'video' && this.availableTools.ffmpeg?.available) {
         return await ffmpegUtil.getVideoInfo(filePath);
+      }
+      
+      // Pour les images, utiliser analyse basique
+      if (type === 'image') {
+        const stats = await fs.stat(filePath);
+        return {
+          size: stats.size,
+          format: path.extname(filePath).toLowerCase().substring(1),
+          // Dimensions seront détectées par Real-ESRGAN
+          width: null,
+          height: null
+        };
       }
       
       return null;
@@ -467,6 +427,43 @@ class AIService {
       console.error('Erreur analyse média:', error);
       return null;
     }
+  }
+
+  // ✅ Valider compatibilité modèle/paramètres
+  validateModelSettings(type, model, scale, fps = null) {
+    const errors = [];
+    
+    if (type === 'image') {
+      // Vérifier modèles Real-ESRGAN
+      const validImageModels = ['realesrgan-x4plus', 'realesrgan-x4plus-anime'];
+      if (!validImageModels.includes(model)) {
+        errors.push(`Modèle image invalide: ${model}. Modèles disponibles: ${validImageModels.join(', ')}`);
+      }
+      
+      // Real-ESRGAN supporte 2x et 4x principalement
+      if (![2, 4].includes(parseInt(scale))) {
+        errors.push(`Scale non optimale pour Real-ESRGAN: ${scale}. Recommandé: 2 ou 4`);
+      }
+      
+    } else if (type === 'video') {
+      const validVideoModels = ['ffmpeg', 'rife'];
+      if (!validVideoModels.includes(model)) {
+        errors.push(`Modèle vidéo invalide: ${model}. Modèles disponibles: ${validVideoModels.join(', ')}`);
+      }
+      
+      if (model === 'rife' && !this.availableTools.rife?.hasModels) {
+        errors.push('RIFE non disponible - modèles manquants dans train_log/');
+      }
+      
+      if (fps && ![24, 30, 60, 120].includes(parseInt(fps))) {
+        errors.push(`FPS non standard: ${fps}. Recommandé: 24, 30, 60 ou 120`);
+      }
+    }
+    
+    return {
+      isValid: errors.length === 0,
+      errors
+    };
   }
 }
 

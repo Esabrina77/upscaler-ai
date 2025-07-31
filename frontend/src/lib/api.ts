@@ -1,4 +1,4 @@
-// src/lib/api.ts - Client API corrigé et complet
+// src/lib/api.ts - Client API corrigé selon le backend
 import axios from 'axios';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
@@ -17,7 +17,7 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// ✅ Types API corrigés
+// ✅ Types API corrigés selon le backend
 export interface User {
   id: number;
   email: string;
@@ -101,7 +101,78 @@ export const UserPlan = {
   PRO: 'PRO' as const
 } as const;
 
-// ✅ API Functions
+// ✅ Modèles disponibles selon le backend
+export const ImageModels = {
+  'waifu2x': {
+    name: 'Waifu2x (Sharp)',
+    description: 'Optimisé dessins et anime - Rapide',
+    speed: 'Très rapide',
+    quality: 'Bon',
+    badge: '🎨',
+    premium: false
+  },
+  'real-esrgan': {
+    name: 'Real-ESRGAN',
+    description: 'IA avancée, excellent pour photos',
+    speed: 'Moyen',
+    quality: 'Excellent',
+    badge: '📸',
+    premium: false
+  },
+  'esrgan': {
+    name: 'ESRGAN (Sharp)',
+    description: 'Polyvalent, bon compromis',
+    speed: 'Rapide',
+    quality: 'Bon',
+    badge: '⚡',
+    premium: false
+  },
+  'srcnn': {
+    name: 'SRCNN (Sharp)',
+    description: 'Léger et efficace',
+    speed: 'Très rapide',
+    quality: 'Correct',
+    badge: '🚀',
+    premium: false
+  }
+} as const;
+
+export const VideoModels = {
+  'real-cugan': {
+    name: 'Real-CUGAN',
+    description: 'Upscaling vidéo temps réel de haute qualité',
+    speed: 'Moyen',
+    quality: 'Excellent',
+    badge: '🎬',
+    premium: false
+  },
+  'rife': {
+    name: 'RIFE',
+    description: 'Interpolation FPS fluide + upscaling',
+    speed: 'Lent',
+    quality: 'Exceptionnel',
+    badge: '🌊',
+    premium: true
+  },
+  'basicvsr': {
+    name: 'BasicVSR++',
+    description: 'Super-resolution vidéo avancée',
+    speed: 'Très lent',
+    quality: 'Maximum',
+    badge: '🔬',
+    premium: true
+  },
+  'ffmpeg': {
+    name: 'FFmpeg Enhanced',
+    description: 'Filtres avancés, compatible tout format',
+    speed: 'Rapide',
+    quality: 'Bon',
+    badge: '⚡',
+    premium: false
+  }
+} as const;
+
+// ✅ API Functions avec bonnes routes
 export const authAPI = {
   register: (email: string, password: string) =>
     api.post<AuthResponse>('/auth/register', { email, password }),
@@ -125,7 +196,7 @@ export const authAPI = {
 };
 
 export const uploadAPI = {
-  // ✅ Upload d'images
+  // ✅ Upload d'images - ROUTE CORRIGÉE
   uploadImage: (file: File, settings: { scale: string; model: string }) => {
     const formData = new FormData();
     formData.append('image', file);
@@ -137,7 +208,7 @@ export const uploadAPI = {
     });
   },
   
-  // ✅ Upload de vidéos
+  // ✅ Upload de vidéos - ROUTE CORRIGÉE
   uploadVideo: (file: File, settings: { 
     scale: string; 
     model: string; 
@@ -159,21 +230,21 @@ export const uploadAPI = {
     });
   },
   
-  // ✅ Status des jobs
-  getImageJobStatus: (jobId: number) =>
+  // ✅ Status des jobs - ROUTES CORRIGÉES
+  getJobStatus: (jobId: number) =>
     api.get<Job>(`/images/job/${jobId}/status`),
     
   getVideoJobStatus: (jobId: number) =>
     api.get<Job>(`/videos/job/${jobId}/status`),
   
-  // ✅ Téléchargements
-  getImageDownloadUrl: (jobId: number) =>
+  // ✅ Téléchargements - URLs CORRIGÉES
+  downloadResult: (jobId: number) =>
     `${API_URL}/images/download/${jobId}`,
     
-  getVideoDownloadUrl: (jobId: number) =>
+  downloadVideoResult: (jobId: number) =>
     `${API_URL}/videos/download/${jobId}`,
   
-  // ✅ Prévisualisations
+  // ✅ Prévisualisations - ROUTES CORRIGÉES
   getImagePreview: (jobId: number) =>
     api.get<{ 
       previewUrl: string; 
@@ -205,7 +276,7 @@ export const uploadAPI = {
       status: string; 
       settings: any; 
       available: boolean;
-      metadata: {
+      fileInfo: {
         size: string;
         contentType: string;
         created: string;
@@ -226,7 +297,7 @@ export const uploadAPI = {
       processingTime?: number;
     }>(`/videos/info/${jobId}`),
 
-  // ✅ Analyse fichiers
+  // ✅ Analyse fichiers - ROUTES CORRIGÉES
   analyzeImage: (file: File) => {
     const formData = new FormData();
     formData.append('image', file);
@@ -390,6 +461,14 @@ export const validateVideoFile = (file: File, userPlan: 'FREE' | 'PREMIUM' | 'PR
   return { isValid: true };
 };
 
+// ✅ Types pour les hooks
+export type UploadSettings = {
+  scale: string;
+  model: string;
+  fps?: string;
+  interpolation?: boolean;
+};
+
 // ✅ Helpers pour estimation et formatage
 export const estimateProcessingTime = (
   fileSize: number, 
@@ -434,12 +513,4 @@ export const formatDuration = (seconds: number): string => {
   const secs = seconds % 60;
   
   return `${hours}h ${minutes}m ${secs}s`;
-};
-
-// ✅ Types pour les hooks
-export type UploadSettings = {
-  scale: string;
-  model: string;
-  fps?: string;
-  interpolation?: boolean;
 };

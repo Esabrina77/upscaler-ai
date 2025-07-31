@@ -1,8 +1,9 @@
+// src/components/features/JobStatusComponent.tsx - CORRIGÉ avec bonnes routes
 'use client';
 
 import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Clock, CheckCircle, XCircle, Download } from 'lucide-react';
+import { Clock, CheckCircle, XCircle, Download, Play, Eye } from 'lucide-react';
 import { uploadAPI, Job, JobStatus } from '@/lib/api';
 import { toast } from 'react-hot-toast';
 
@@ -19,7 +20,11 @@ const JobStatusComponent: React.FC<JobStatusProps> = ({ jobId, onComplete }) => 
   useEffect(() => {
     const pollJobStatus = async () => {
       try {
-        const response = await uploadAPI.getJobStatus(jobId);
+        // Utiliser la bonne route selon le type de job
+        const response = job?.type === 'VIDEO' 
+          ? await uploadAPI.getVideoJobStatus(jobId)
+          : await uploadAPI.getJobStatus(jobId);
+        
         const jobData = response.data;
         setJob(jobData);
 
@@ -28,9 +33,14 @@ const JobStatusComponent: React.FC<JobStatusProps> = ({ jobId, onComplete }) => 
           toast.success('Traitement terminé !');
           onComplete?.(jobData);
 
+          // Pour les vidéos, récupérer l'URL de streaming
           if (jobData.type === 'VIDEO') {
-            const res = await uploadAPI.getVideoStream(jobData.id);
-            setVideoStreamUrl(res.data.streamUrl);
+            try {
+              const streamResponse = await uploadAPI.getVideoStream(jobData.id);
+              setVideoStreamUrl(streamResponse.data.streamUrl);
+            } catch (streamError) {
+              console.warn('Impossible de récupérer le stream vidéo:', streamError);
+            }
           }
         } else if (jobData.status === JobStatus.FAILED) {
           setIsPolling(false);
@@ -44,10 +54,10 @@ const JobStatusComponent: React.FC<JobStatusProps> = ({ jobId, onComplete }) => 
 
     if (isPolling) {
       pollJobStatus();
-      const interval = setInterval(pollJobStatus, 2000);
+      const interval = setInterval(pollJobStatus, 3000); // 3 secondes
       return () => clearInterval(interval);
     }
-  }, [jobId, isPolling, onComplete]);
+  }, [jobId, isPolling, onComplete, job?.type]);
 
   if (!job) {
     return (
@@ -104,9 +114,16 @@ const JobStatusComponent: React.FC<JobStatusProps> = ({ jobId, onComplete }) => 
     }
   };
 
-  const getPublicUrl = (firebasePath: string) => {
-    const bucket = process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET;
-    return `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodeURIComponent(firebasePath)}?alt=media`;
+  const getDownloadUrl = () => {
+    return job.type === 'VIDEO' 
+      ? uploadAPI.downloadVideoResult(job.id)
+      : uploadAPI.downloadResult(job.id);
+  };
+
+  const getPreviewUrl = () => {
+    return job.type === 'VIDEO' 
+      ? videoStreamUrl
+      : uploadAPI.downloadResult(job.id);
   };
 
   return (
@@ -120,25 +137,43 @@ const JobStatusComponent: React.FC<JobStatusProps> = ({ jobId, onComplete }) => 
           <div className="flex items-center gap-3">
             {getStatusIcon()}
             <div>
-              <h3 className="font-medium text-black">Job #{job.id}</h3>
+              <h3 className="font-medium text-black">
+                Job #{job.id} • {job.type === 'VIDEO' ? 'Vidéo' : 'Image'}
+              </h3>
               <p className={`text-sm font-medium ${getStatusColor()}`}>
                 {getStatusText()}
               </p>
             </div>
           </div>
+          
           {job.status === JobStatus.COMPLETED && (
-            <a
-              href={
-                job.type === 'VIDEO'
-                  ? uploadAPI.downloadVideoResult(job.id)
-                  : uploadAPI.downloadResult(job.id)
-              }
-              download
-              className="inline-flex items-center gap-2 px-4 py-2 bg-black text-white rounded-lg hover:bg-gray-800 transition-colors"
-            >
-              <Download className="w-4 h-4" />
-              Télécharger
-            </a>
+            <div className="flex gap-2">
+              {/* Bouton prévisualisation */}
+              {(job.type === 'VIDEO' && videoStreamUrl) || job.type === 'IMAGE' ? (
+                <button
+                  onClick={() => {
+                    const previewUrl = getPreviewUrl();
+                    if (previewUrl) {
+                      window.open(previewUrl, '_blank');
+                    }
+                  }}
+                  className="inline-flex items-center gap-2 px-3 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"
+                >
+                  {job.type === 'VIDEO' ? <Play className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  {job.type === 'VIDEO' ? 'Lire' : 'Voir'}
+                </button>
+              ) : null}
+              
+              {/* Bouton téléchargement */}
+              <a
+                href={getDownloadUrl()}
+                download
+                className="inline-flex items-center gap-2 px-4 py-2 bg-black text-white rounded-lg hover:bg-gray-800 transition-colors"
+              >
+                <Download className="w-4 h-4" />
+                Télécharger
+              </a>
+            </div>
           )}
         </div>
 
@@ -178,54 +213,96 @@ const JobStatusComponent: React.FC<JobStatusProps> = ({ jobId, onComplete }) => 
               <span className="ml-2 font-medium text-black">{job.processingTime}s</span>
             </div>
           )}
+          {job.type === 'VIDEO' && job.settings.fps && (
+            <div>
+              <span className="text-gray-500">FPS:</span>
+              <span className="ml-2 font-medium text-black">{job.settings.fps}</span>
+            </div>
+          )}
+          {job.type === 'VIDEO' && job.settings.interpolation && (
+            <div>
+              <span className="text-gray-500">Interpolation:</span>
+              <span className="ml-2 font-medium text-black">
+                {job.settings.interpolation ? 'Activée' : 'Désactivée'}
+              </span>
+            </div>
+          )}
         </div>
 
-        {/* Visualisation image ou vidéo */}
-        {job.status === JobStatus.COMPLETED && (
-          <div className="grid grid-cols-2 gap-4 pt-4">
-            <div>
-              <p className="text-sm text-gray-500 mb-2">Entrée</p>
-              {job.type === 'VIDEO' ? (
-                <div className="bg-gray-100 text-center text-sm text-gray-500 p-4 rounded-lg">
-                  Vidéo d’entrée non disponible
-                </div>
-              ) : job.inputFile ? (
-                <img
-                  src={getPublicUrl(job.inputFile)}
-                  alt="Image d'entrée"
-                  className="w-full rounded-lg shadow"
-                />
-              ) : (
-                <div className="bg-gray-100 text-center text-sm text-gray-500 p-4 rounded-lg">
-                  Image d’entrée non disponible
-                </div>
-              )}
+        {/* Visualisation pour images terminées */}
+        {job.status === JobStatus.COMPLETED && job.type === 'IMAGE' && (
+          <div className="pt-4">
+            <p className="text-sm text-gray-500 mb-2">Aperçu du résultat</p>
+            <div className="bg-gray-100 rounded-lg p-4 text-center">
+              <img
+                src={uploadAPI.downloadResult(job.id)}
+                alt="Image traitée"
+                className="max-w-full max-h-64 mx-auto rounded-lg shadow"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = 'none';
+                  (e.target as HTMLImageElement).nextElementSibling!.textContent = 
+                    'Aperçu non disponible - Fichier peut-être expiré';
+                }}
+              />
+              <p className="text-sm text-gray-500 mt-2 hidden">
+                Aperçu non disponible - Fichier peut-être expiré
+              </p>
             </div>
+          </div>
+        )}
 
-            <div>
-              <p className="text-sm text-gray-500 mb-2">Sortie</p>
-              {job.type === 'VIDEO' && videoStreamUrl ? (
-                <video controls className="w-full rounded-lg shadow">
-                  <source src={videoStreamUrl} type="video/mp4" />
-                </video>
-              ) : job.type === 'IMAGE' ? (
-                <img
-                  src={uploadAPI.downloadResult(job.id)}
-                  alt="Image sortie"
-                  className="w-full rounded-lg shadow"
-                />
-              ) : (
-                <div className="bg-gray-100 text-center text-sm text-gray-500 p-4 rounded-lg">
-                  Aperçu indisponible
-                </div>
-              )}
+        {/* Lecteur vidéo pour vidéos terminées */}
+        {job.status === JobStatus.COMPLETED && job.type === 'VIDEO' && videoStreamUrl && (
+          <div className="pt-4">
+            <p className="text-sm text-gray-500 mb-2">Aperçu de la vidéo</p>
+            <div className="bg-black rounded-lg overflow-hidden">
+              <video 
+                controls 
+                className="w-full max-h-64"
+                preload="metadata"
+              >
+                <source src={videoStreamUrl} type="video/mp4" />
+                Votre navigateur ne supporte pas la lecture vidéo.
+              </video>
+            </div>
+          </div>
+        )}
+
+        {/* Informations vidéo originale */}
+        {job.type === 'VIDEO' && job.settings.originalInfo && (
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-sm font-medium text-gray-700 mb-2">Informations vidéo</p>
+            <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
+              <div>
+                <span className="font-medium">Résolution:</span> {job.settings.originalInfo.resolution}
+              </div>
+              <div>
+                <span className="font-medium">FPS original:</span> {job.settings.originalInfo.fps}
+              </div>
+              <div>
+                <span className="font-medium">Durée:</span> {job.settings.originalInfo.duration}s
+              </div>
+              <div>
+                <span className="font-medium">Codec:</span> {job.settings.originalInfo.codec}
+              </div>
             </div>
           </div>
         )}
 
         {job.status === JobStatus.FAILED && job.errorMessage && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-            <p className="text-red-700 text-sm">{job.errorMessage}</p>
+            <p className="text-red-700 text-sm font-medium">Erreur de traitement</p>
+            <p className="text-red-600 text-sm mt-1">{job.errorMessage}</p>
+          </div>
+        )}
+
+        {/* Informations disponibilité */}
+        {job.status === JobStatus.COMPLETED && job.available === false && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+            <p className="text-amber-700 text-sm font-medium">Fichier expiré</p>
+            <p className="text-amber-600 text-sm mt-1">
+              {job.expiredMessage || 'Le fichier a été supprimé après la période de conservation (1h)'}
+            </p>
           </div>
         )}
       </div>

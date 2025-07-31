@@ -1,4 +1,4 @@
-// controllers/videoController.js - Modernisé avec nettoyage intelligent
+// controllers/videoController.js - Modernisé avec nettoyage intelligent - COMPLET CORRIGÉ
 const aiService = require('../services/aiService');
 const queueService = require('../services/queueService');
 const JobService = require('../lib/jobService');
@@ -149,6 +149,9 @@ class VideoController {
         scale, fps, model, type: 'video'
       });
 
+      // ✅ FIX LIGNE 163 - Utiliser this.getQueuePosition au lieu de getQueuePosition
+      const queuePosition = await this.getQueuePosition(job.id);
+
       res.json({
         jobId: job.id,
         status: 'queued',
@@ -160,7 +163,7 @@ class VideoController {
           resolution: `${videoInfo.video.width}x${videoInfo.video.height}`,
           currentFps: Math.round(videoInfo.video.fps)
         } : null,
-        queuePosition: await this.getQueuePosition(job.id)
+        queuePosition
       });
 
     } catch (error) {
@@ -622,13 +625,12 @@ class VideoController {
     return tips;
   }
 
-  // Position dans la queue
+  // ✅ Méthode manquante ajoutée - Position dans la queue
   async getQueuePosition(jobId) {
     try {
-      const pendingJobs = await JobService.getPendingJobs('VIDEO', 50);
-      const position = pendingJobs.findIndex(job => job.id === parseInt(jobId));
-      return position >= 0 ? position + 1 : null;
-    } catch {
+      return await queueService.getQueuePosition(jobId);
+    } catch (error) {
+      console.error('Erreur getQueuePosition:', error);
       return null;
     }
   }

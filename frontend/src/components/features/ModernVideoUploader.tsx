@@ -1,4 +1,4 @@
-// src/components/features/ModernVideoUploader.tsx - Corrigé
+// src/components/features/ModernVideoUploader.tsx - CORRIGÉ avec bons modèles et routes
 'use client';
 
 import React, { useState, useCallback, useRef } from 'react';
@@ -8,18 +8,18 @@ import {
   Upload, Video, Play, Settings, Download, Eye, Trash2, 
   Zap, Clock, Gauge, Sparkles, Crown, Lock, AlertCircle 
 } from 'lucide-react';
-import { uploadAPI, validateVideoFile, formatFileSize, type UploadSettings } from '@/lib/api';
+import { uploadAPI, validateVideoFile, formatFileSize, VideoModels, type UploadSettings } from '@/lib/api';
 import { toast } from 'react-hot-toast';
 
 interface VideoUploaderProps {
-  onUpload?: (file: File, settings: VideoSettings) => void;
+  onUpload?: (file: File, settings: VideoUploadSettings) => void;
   userPlan?: 'FREE' | 'PREMIUM' | 'PRO';
 }
 
-interface VideoSettings {
+interface VideoUploadSettings {
   scale: 2 | 4 | 8;
   fps: 'auto' | '24' | '30' | '60' | '120';
-  model: 'real-cugan' | 'rife' | 'basicvsr' | 'ffmpeg';
+  model: keyof typeof VideoModels;
   interpolation: boolean;
 }
 
@@ -32,7 +32,7 @@ interface VideoJobStatus {
   estimatedTime?: number;
   inputFile?: string;
   outputFile?: string;
-  settings?: VideoSettings;
+  settings?: VideoUploadSettings;
   processingTime?: number;
   errorMessage?: string;
   videoInfo?: {
@@ -47,10 +47,10 @@ const ModernVideoUploader: React.FC<VideoUploaderProps> = ({
   userPlan = 'FREE' 
 }) => {
   const [files, setFiles] = useState<File[]>([]);
-  const [settings, setSettings] = useState<VideoSettings>({
+  const [settings, setSettings] = useState<VideoUploadSettings>({
     scale: 2,
     fps: '60',
-    model: 'real-cugan',
+    model: 'ffmpeg', // Modèle par défaut disponible pour tous
     interpolation: false
   });
   const [jobs, setJobs] = useState<VideoJobStatus[]>([]);
@@ -87,49 +87,24 @@ const ModernVideoUploader: React.FC<VideoUploaderProps> = ({
       });
 
       if (acceptedFiles.length > 0) {
-        setFiles(prev => [...prev, ...acceptedFiles]);
-        toast.success(`${acceptedFiles.length} vidéo(s) ajoutée(s)`);
+        const validFiles = acceptedFiles.filter(file => {
+          const validation = validateVideoFile(file, userPlan);
+          if (!validation.isValid) {
+            toast.error(`${file.name}: ${validation.error}`);
+            return false;
+          }
+          return true;
+        });
+        
+        if (validFiles.length > 0) {
+          setFiles(prev => [...prev, ...validFiles]);
+          toast.success(`${validFiles.length} vidéo(s) ajoutée(s)`);
+        }
       }
-    }, [canUploadVideos, maxFileSize])
-  });
+    }, [canUploadVideos, maxFileSize, userPlan])
+  );
 
-  // Modèles vidéo disponibles
-  const videoModels = {
-    'real-cugan': {
-      name: 'Real-CUGAN',
-      description: 'Upscaling vidéo temps réel de haute qualité',
-      speed: 'Moyen',
-      quality: 'Excellent',
-      badge: '🎬',
-      premium: false
-    },
-    'rife': {
-      name: 'RIFE',
-      description: 'Interpolation FPS fluide + upscaling',
-      speed: 'Lent',
-      quality: 'Exceptionnel',
-      badge: '🌊',
-      premium: true
-    },
-    'basicvsr': {
-      name: 'BasicVSR++',
-      description: 'Super-resolution vidéo avancée',
-      speed: 'Très lent',
-      quality: 'Maximum',
-      badge: '🔬',
-      premium: true
-    },
-    'ffmpeg': {
-      name: 'FFmpeg Enhanced',
-      description: 'Filtres avancés, compatible tout format',
-      speed: 'Rapide',
-      quality: 'Bon',
-      badge: '⚡',
-      premium: false
-    }
-  };
-
-  // Options FPS
+  // Options FPS avec restrictions
   const fpsOptions = [
     { value: 'auto' as const, label: 'Auto', description: 'Conserver FPS original' },
     { value: '24' as const, label: '24 FPS', description: 'Cinéma' },
@@ -176,7 +151,7 @@ const ModernVideoUploader: React.FC<VideoUploaderProps> = ({
     setJobs(prev => [newJob, ...prev]);
 
     try {
-      // Upload vers l'API
+      // Upload vers l'API avec les bons paramètres selon le backend
       const uploadSettings: UploadSettings = {
         scale: settings.scale.toString(),
         model: settings.model,
@@ -207,6 +182,7 @@ const ModernVideoUploader: React.FC<VideoUploaderProps> = ({
       }
 
       toast.success('Vidéo ajoutée à la file de traitement !');
+      onUpload?.(file, settings);
       
     } catch (error: any) {
       const errorMessage = error.response?.data?.error || 'Erreur lors de l\'upload';
@@ -238,7 +214,7 @@ const ModernVideoUploader: React.FC<VideoUploaderProps> = ({
                 progress: status.progress || job.progress,
                 processingTime: status.processingTime,
                 outputFile: status.status === 'COMPLETED' ? 
-                  uploadAPI.getVideoDownloadUrl(apiJobId) : undefined,
+                  uploadAPI.downloadVideoResult(apiJobId) : undefined,
                 errorMessage: status.errorMessage,
                 queuePosition: status.status === 'PENDING' ? job.queuePosition : undefined
               }
@@ -267,7 +243,7 @@ const ModernVideoUploader: React.FC<VideoUploaderProps> = ({
   };
 
   // Calculer temps estimé
-  const getEstimatedTime = (settings: VideoSettings, fileSizeMB: number) => {
+  const getEstimatedTime = (settings: VideoUploadSettings, fileSizeMB: number) => {
     const baseFactor = settings.model === 'rife' ? 12 : 
                       settings.model === 'basicvsr' ? 15 : 
                       settings.model === 'real-cugan' ? 8 : 5;
@@ -485,11 +461,11 @@ const ModernVideoUploader: React.FC<VideoUploaderProps> = ({
                   </div>
                 </div>
 
-                {/* Modèle */}
+                {/* Modèle - CORRIGÉ avec vrais modèles backend */}
                 <div>
                   <label className="block text-sm font-medium mb-3">Modèle d'IA</label>
                   <div className="grid grid-cols-2 gap-3">
-                    {(Object.entries(videoModels) as Array<[keyof typeof videoModels, typeof videoModels[keyof typeof videoModels]]>).map(([key, model]) => (
+                    {(Object.entries(VideoModels) as Array<[keyof typeof VideoModels, typeof VideoModels[keyof typeof VideoModels]]>).map(([key, model]) => (
                       <button
                         key={key}
                         onClick={() => setSettings(prev => ({ ...prev, model: key }))}
